@@ -1,0 +1,17 @@
+syscall routine
+
+when system call occurs, jumps to E_host.cpp line 75
+
+(Detailed traceback
+1. goes to E_TCPApplication.cpp's corresponding system call function
+2. goes to E_Syscall (E_host.cpp line 634)
+3. sendMessage invokes Host::messageReceived (E_hostcpp line 75)
+)
+
+It calls appropriate systemCallBack function.
+Default one goes E_host.cpp line 298.
+Our implementation goes TCPAssignment.cpp's systemCallBack.
+
+To return the value, call
+this->returnSystemCall(syscallUUID, value);
+where value is int.
