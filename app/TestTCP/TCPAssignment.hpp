@@ -26,6 +26,7 @@ class TCPAssignment : public HostModule, public NetworkModule, public SystemCall
 {
 private:
 
+
 private:
 	virtual void timerCallback(void* payload) final;
 
@@ -34,6 +35,34 @@ public:
 	virtual void initialize();
 	virtual void finalize();
 	virtual ~TCPAssignment();
+
+	class BindData
+	{
+	public:
+		bool in_use;
+		unsigned long ip_address;
+		unsigned short port;
+		int fd;
+	};
+	class BindList
+	{
+	public:
+		BindData* b;
+		int size;
+		int capacity;
+
+		BindList();
+		void resizeBindList();
+	};
+
+	BindList bindlist;
+
+	int syscall_socket(UUID syscallUUID, int pid, int domain, int type__unused);
+	int syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen);
+	int syscall_getsockname(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+	int syscall_close(UUID syscallUUID, int pid, int fd);
+
+
 protected:
 	virtual void systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param) final;
 	virtual void packetArrived(std::string fromModule, Packet* packet) final;
