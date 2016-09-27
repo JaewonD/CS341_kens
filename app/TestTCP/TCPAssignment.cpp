@@ -44,11 +44,6 @@ void TCPAssignment::BindList::resizeBindList ()
 		memset(this->b + old_capacity, 0, sizeof(BindData)*(new_capacity - old_capacity));
 		this->capacity = new_capacity;
 	}
-	else if (this->size < this->capacity * 0.3 && this->capacity > 10)
-	{
-		realloc (this->b, this->capacity / 2);
-		this->capacity /= 2;
-	}
 }
 
 TCPAssignment::~TCPAssignment()
