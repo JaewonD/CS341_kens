@@ -26,6 +26,26 @@ TCPAssignment::TCPAssignment(Host* host) : HostModule("TCP", host),
 
 }
 
+TCPAssignment::BindList::BindList()
+{
+	int initial_capacity = 10;
+	this->b = (BindData*) calloc (initial_capacity, sizeof(BindData));
+	this->size = 0;
+	this->capacity = initial_capacity;
+}
+
+void TCPAssignment::BindList::resizeBindList ()
+{
+	if (this->size == this->capacity)
+	{
+		int old_capacity = this->capacity;
+		int new_capacity = this->capacity * 3 / 2;
+		realloc (this->b, new_capacity);
+		memset(this->b + old_capacity, 0, sizeof(BindData)*(new_capacity - old_capacity));
+		this->capacity = new_capacity;
+	}
+}
+
 TCPAssignment::~TCPAssignment()
 {
 
@@ -43,13 +63,16 @@ void TCPAssignment::finalize()
 
 void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param)
 {
+	int ret;
 	switch(param.syscallNumber)
 	{
 	case SOCKET:
-		//this->syscall_socket(syscallUUID, pid, param.param1_int, param.param2_int);
+		ret = this->syscall_socket(syscallUUID, pid, param.param1_int, param.param2_int);
+		this->returnSystemCall(syscallUUID, ret);
 		break;
 	case CLOSE:
-		//this->syscall_close(syscallUUID, pid, param.param1_int);
+		ret = this->syscall_close(syscallUUID, pid, param.param1_int);
+		this->returnSystemCall(syscallUUID, ret);
 		break;
 	case READ:
 		//this->syscall_read(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
@@ -70,14 +93,16 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 		//		static_cast<socklen_t*>(param.param3_ptr));
 		break;
 	case BIND:
-		//this->syscall_bind(syscallUUID, pid, param.param1_int,
-		//		static_cast<struct sockaddr *>(param.param2_ptr),
-		//		(socklen_t) param.param3_int);
+		ret = this->syscall_bind(syscallUUID, pid, param.param1_int,
+				static_cast<struct sockaddr *>(param.param2_ptr),
+				(socklen_t) param.param3_int);
+		this->returnSystemCall(syscallUUID, ret);
 		break;
 	case GETSOCKNAME:
-		//this->syscall_getsockname(syscallUUID, pid, param.param1_int,
-		//		static_cast<struct sockaddr *>(param.param2_ptr),
-		//		static_cast<socklen_t*>(param.param3_ptr));
+		ret = this->syscall_getsockname(syscallUUID, pid, param.param1_int,
+				static_cast<struct sockaddr *>(param.param2_ptr),
+				static_cast<socklen_t*>(param.param3_ptr));
+		this->returnSystemCall(syscallUUID, ret);
 		break;
 	case GETPEERNAME:
 		//this->syscall_getpeername(syscallUUID, pid, param.param1_int,
@@ -87,6 +112,118 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 	default:
 		assert(0);
 	}
+}
+
+int TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int domain, int type__unused)
+{
+	int new_fd = SystemCallInterface::createFileDescriptor (pid);
+	return new_fd;
+}
+
+int TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen)
+{
+	TCPAssignment::bindlist.resizeBindList();
+
+	unsigned long new_ip_address = ((struct sockaddr_in*)addr)->sin_addr.s_addr;
+	unsigned short new_port = ((struct sockaddr_in*)addr)->sin_port;
+
+	bool overlap_detected = false;
+
+	/* Check for overlapping data */
+	for (int i=0; i<TCPAssignment::bindlist.capacity; i++)
+	{
+		BindData bd = TCPAssignment::bindlist.b[i];
+		if (bd.in_use)
+		{
+			if (bd.port == new_port) 
+			{
+				if (bd.ip_address == new_ip_address || new_ip_address == htonl(INADDR_ANY) ||
+					bd.ip_address == htonl(INADDR_ANY))
+				{
+					overlap_detected = true;
+					break;
+				}
+			}
+			else if (sockfd == bd.fd)
+			{
+				overlap_detected = true;
+				break;
+			}
+		}	
+	}
+
+	/* Overlap detected */
+	if (overlap_detected)
+	{
+		return -1;
+	}
+
+	/* Overlap not detected, add new data into the list. */
+	/* Check for empty spot */
+	bool inserted = false;
+	for (int i=0; i<TCPAssignment::bindlist.capacity; i++)
+	{
+		BindData* bd = &(TCPAssignment::bindlist.b[i]);
+		if (!bd->in_use)
+		{
+			bd->in_use = true;
+			bd->ip_address = new_ip_address;
+			bd->port = new_port;
+			bd->fd = sockfd;
+			TCPAssignment::bindlist.size++;
+			inserted = true;
+			break;
+		}
+	}
+	assert(inserted);
+
+	//printdb();
+	//printf("capacity:%d\n", TCPAssignment::bindlist.capacity);
+	//for (int i=0; i<TCPAssignment::bindlist.capacity; i++)
+	//{
+	//	BindData* bd = &(TCPAssignment::bindlist.b[i]);
+	//	printf("InUse: %d, IP: %lu, Port: %d, fd: %d\n", bd->in_use, bd->ip_address, bd->port, bd->fd);
+	//}
+	return 0;
+}
+
+int TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+{
+	int success = -1;
+	for (int i=0; i<TCPAssignment::bindlist.capacity; i++)
+	{
+		BindData* bd = &(TCPAssignment::bindlist.b[i]);
+		if (bd->in_use && bd->fd == sockfd)
+		{
+			struct sockaddr_in socket_name;
+			memset(&socket_name, 0, sizeof socket_name);
+			socket_name.sin_family = AF_INET;
+			socket_name.sin_addr.s_addr = bd->ip_address;
+			socket_name.sin_port = bd->port;
+			int size_minimum = (sizeof(struct sockaddr_in) < *addrlen)? sizeof(struct sockaddr_in) : *addrlen;
+			memcpy(addr, &socket_name, size_minimum);
+			*addrlen = size_minimum;
+			success = 0;
+			break;
+		}
+	}
+	return success;
+}
+
+int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
+{
+	for (int i=0; i<TCPAssignment::bindlist.capacity; i++)
+	{
+		BindData* bd = &(TCPAssignment::bindlist.b[i]);
+		if (bd->in_use && bd->fd == fd)
+		{
+			bd->in_use = false;
+			TCPAssignment::bindlist.size--;
+			break;
+		}
+	}
+	SystemCallInterface::removeFileDescriptor(pid, fd);
+	return 0;
 }
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
