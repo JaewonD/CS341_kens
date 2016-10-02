@@ -33,7 +33,7 @@ TCPAssignment::BindList::BindList()
 	this->size = 0;
 	this->capacity = initial_capacity;
 }
-
+  
 void TCPAssignment::BindList::resizeBindList ()
 {
 	if (this->size == this->capacity)
@@ -45,7 +45,67 @@ void TCPAssignment::BindList::resizeBindList ()
 		this->capacity = new_capacity;
 	}
 }
+TCPAssignment::fds_list::fds_list()
+{
+        this->head=NULL;
+	this->length=0;
+}
+void TCPAssignment::fds_list::insert_fds(int fd){
+	fds_node* newnode=(fds_node* )calloc(1, sizeof(fds_node));
+	newnode->validfds=fd;
+	if(this->length==0)
+	{
+		this->head=newnode;
+		this->length++;
+	}
+	else
+	{
+		fds_node* endnode=this->head;
+	  	while(1)
+	    	{
+			if(endnode->validfds==fd) break;
 
+			else if(endnode->next==NULL)
+			{
+				endnode->next=newnode;
+				this->length++;
+				break;
+			}
+
+			else endnode=endnode->next;
+		}
+	}
+}
+void TCPAssignment::fds_list::remove_fds(int fd){
+	fds_node* first=this->head;
+	if(first==NULL) return;
+	if(first->validfds==fd)
+	{
+		this->head=first->next;
+		this->length--;
+	}
+	fds_node* second=first->next;
+	while(second!=NULL)
+	{
+		if(second->validfds==fd)
+		{
+			first->next=second->next;
+			this->length--;
+			break;
+		}
+		first=second;
+		second=second->next;
+	}
+}
+bool TCPAssignment::fds_list::search_fds(int fd){
+	fds_node* search=this->head;
+	while(search!=NULL)
+	{
+		if(search->validfds==fd) return true;
+		search=search->next;
+	}
+	return false;
+}
 TCPAssignment::~TCPAssignment()
 {
 
@@ -117,6 +177,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 int TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int domain, int type__unused)
 {
 	int new_fd = SystemCallInterface::createFileDescriptor (pid);
+	TCPAssignment::Validfds.insert_fds(new_fd);
 	return new_fd;
 }
 
@@ -128,6 +189,9 @@ int TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd, struct so
 	unsigned short new_port = ((struct sockaddr_in*)addr)->sin_port;
 
 	bool overlap_detected = false;
+
+	/*Check for valid fd*/
+	if(!TCPAssignment::Validfds.search_fds(sockfd)) return -1;
 
 	/* Check for overlapping data */
 	for (int i=0; i<TCPAssignment::bindlist.capacity; i++)
@@ -212,6 +276,7 @@ int TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int sockfd, st
 
 int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
 {
+	TCPAssignment::Validfds.remove_fds(fd);
 	for (int i=0; i<TCPAssignment::bindlist.capacity; i++)
 	{
 		BindData* bd = &(TCPAssignment::bindlist.b[i]);
