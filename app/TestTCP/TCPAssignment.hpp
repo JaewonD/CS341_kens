@@ -54,9 +54,26 @@ public:
 		BindList();
 		void resizeBindList();
 	};
-
+  
+        class Fds_node
+	{
+	public:
+	        int validfds;
+	        Fds_node* next;
+	};
+        class Fds_list
+	{
+	public:
+	        int length=0;
+	        Fds_node* head;
+	  
+	        Fds_list();
+	        void insert_fds(int fd);
+	        void remove_fds(int fd);
+	        bool search_fds(int fd);
+	};
 	BindList bindlist;
-
+        Fds_list validfds;
 	int syscall_socket(UUID syscallUUID, int pid, int domain, int type__unused);
 	int syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen);
 	int syscall_getsockname(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen);
