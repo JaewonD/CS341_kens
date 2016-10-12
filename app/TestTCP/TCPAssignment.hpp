@@ -28,70 +28,70 @@ private:
 
 
 private:
-	virtual void timerCallback(void* payload) final;
+    virtual void timerCallback(void* payload) final;
 
 public:
-	TCPAssignment(Host* host);
-	virtual void initialize();
-	virtual void finalize();
-	virtual ~TCPAssignment();
+    TCPAssignment(Host* host);
+    virtual void initialize();
+    virtual void finalize();
+    virtual ~TCPAssignment();
 
-	class BindData
-	{
-	public:
-		bool in_use;
-		unsigned long ip_address;
-		unsigned short port;
-		int fd;
-	};
-	class BindList
-	{
-	public:
-		BindData* b;
-		int size;
-		int capacity;
+    class BindData
+    {
+    public:
+        bool in_use;
+        unsigned long ip_address;
+        unsigned short port;
+        int fd;
+    };
+    class BindList
+    {
+    public:
+        BindData* b;
+        int size;
+        int capacity;
 
-		BindList();
-		void resizeBindList();
-	};
+        BindList();
+        void resizeBindList();
+    };
   
-        class Fds_node
-	{
-	public:
-	        int validfds;
-	        Fds_node* next;
-	};
-        class Fds_list
-	{
-	public:
-	        int length=0;
-	        Fds_node* head;
-	  
-	        Fds_list();
-	        void insert_fds(int fd);
-	        void remove_fds(int fd);
-	        bool search_fds(int fd);
-	};
-	BindList bindlist;
-        Fds_list validfds;
-	int syscall_socket(UUID syscallUUID, int pid, int domain, int type__unused);
-	int syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen);
-	int syscall_getsockname(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen);
-	int syscall_close(UUID syscallUUID, int pid, int fd);
+    class Fds_node
+    {
+    public:
+            int validfds;
+            Fds_node* next;
+    };
+    class Fds_list
+    {
+    public:
+            int length=0;
+            Fds_node* head;
+      
+            Fds_list();
+            void insert_fds(int fd);
+            void remove_fds(int fd);
+            bool search_fds(int fd);
+    };
+    BindList bindlist;
+    Fds_list validfds;
+    int syscall_socket(UUID syscallUUID, int pid, int domain, int type__unused);
+    int syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen);
+    int syscall_getsockname(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+    int syscall_close(UUID syscallUUID, int pid, int fd);
 
 
 protected:
-	virtual void systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param) final;
-	virtual void packetArrived(std::string fromModule, Packet* packet) final;
+    virtual void systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param) final;
+    virtual void packetArrived(std::string fromModule, Packet* packet) final;
 };
 
 class TCPAssignmentProvider
 {
 private:
-	TCPAssignmentProvider() {}
-	~TCPAssignmentProvider() {}
+    TCPAssignmentProvider() {}
+    ~TCPAssignmentProvider() {}
 public:
-	static HostModule* allocate(Host* host) { return new TCPAssignment(host); }
+    static HostModule* allocate(Host* host) { return new TCPAssignment(host); }
 };
 
 }
