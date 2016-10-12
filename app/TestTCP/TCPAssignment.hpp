@@ -15,7 +15,7 @@
 #include <netinet/tcp.h>
 #include <netinet/ip.h>
 #include <netinet/in.h>
-
+#include <map>
 
 #include <E/E_TimerModule.hpp>
 
@@ -36,48 +36,29 @@ public:
     virtual void finalize();
     virtual ~TCPAssignment();
 
-    class BindData
+    enum class State {
+        // Add more states here
+        CLOSED, LISTEN, SYN_SENT, SYN_RCVD, ESTABLISHED
+    };
+
+    class Context
     {
     public:
-        bool in_use;
         unsigned long ip_address;
         unsigned short port;
-        int fd;
+        State state;
     };
-    class BindList
-    {
-    public:
-        BindData* b;
-        int size;
-        int capacity;
 
-        BindList();
-        void resizeBindList();
-    };
-  
-    class Fds_node
-    {
-    public:
-            int validfds;
-            Fds_node* next;
-    };
-    class Fds_list
-    {
-    public:
-            int length=0;
-            Fds_node* head;
-      
-            Fds_list();
-            void insert_fds(int fd);
-            void remove_fds(int fd);
-            bool search_fds(int fd);
-    };
-    BindList bindlist;
-    Fds_list validfds;
+    std::map<int, Context> contextList;
+
     int syscall_socket(UUID syscallUUID, int pid, int domain, int type__unused);
     int syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen);
     int syscall_getsockname(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen);
     int syscall_close(UUID syscallUUID, int pid, int fd);
+    int syscall_connect(UUID syscallUUID, int pid, int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+    int syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog);
+    int syscall_accept(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+    int syscall_getpeername(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 
 
 protected:

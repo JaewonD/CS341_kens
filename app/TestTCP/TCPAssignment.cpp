@@ -26,88 +26,6 @@ TCPAssignment::TCPAssignment(Host* host) : HostModule("TCP", host),
 
 }
 
-TCPAssignment::BindList::BindList()
-{
-    int initial_capacity = 10;
-    this->b = (BindData*) calloc (initial_capacity, sizeof(BindData));
-    this->size = 0;
-    this->capacity = initial_capacity;
-}
-  
-void TCPAssignment::BindList::resizeBindList ()
-{
-    if (this->size == this->capacity)
-    {
-        int old_capacity = this->capacity;
-        int new_capacity = this->capacity * 3 / 2;
-        realloc (this->b, new_capacity);
-        memset(this->b + old_capacity, 0, sizeof(BindData)*(new_capacity - old_capacity));
-        this->capacity = new_capacity;
-    }
-}
-TCPAssignment::Fds_list::Fds_list()
-{
-        this->head=NULL;
-    this->length=0;
-}
-void TCPAssignment::Fds_list::insert_fds(int fd){
-    Fds_node* newnode=(Fds_node* )calloc(1, sizeof(Fds_node));
-    newnode->validfds=fd;
-    if(this->length==0)
-    {
-        this->head=newnode;
-        this->length++;
-    }
-    else
-    {
-        Fds_node* endnode=this->head;
-        while(1)
-            {
-            if(endnode->validfds==fd) break;
-
-            else if(endnode->next==NULL)
-            {
-                endnode->next=newnode;
-                this->length++;
-                break;
-            }
-
-            else endnode=endnode->next;
-        }
-    }
-}
-void TCPAssignment::Fds_list::remove_fds(int fd){
-    Fds_node* first=this->head;
-    if(first==NULL) return;
-    if(first->validfds==fd)
-    {
-        this->head=first->next;
-        this->length--;
-        return;
-    }
-    Fds_node* second=first->next;
-    while(second!=NULL)
-    {
-        if(second->validfds==fd)
-        {
-            first->next=second->next;
-            this->length--;
-            free(second);
-            break;
-        }
-        first=second;
-        second=second->next;
-    }
-}
-bool TCPAssignment::Fds_list::search_fds(int fd){
-    Fds_node* search=this->head;
-    while(search!=NULL)
-    {
-        if(search->validfds==fd) return true;
-        search=search->next;
-    }
-    return false;
-}
 TCPAssignment::~TCPAssignment()
 {
 
@@ -143,16 +61,16 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
         //this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
         break;
     case CONNECT:
-        //this->syscall_connect(syscallUUID, pid, param.param1_int,
-        //      static_cast<struct sockaddr*>(param.param2_ptr), (socklen_t)param.param3_int);
+        ret = this->syscall_connect(syscallUUID, pid, param.param1_int,
+              static_cast<struct sockaddr*>(param.param2_ptr), (socklen_t)param.param3_int);
         break;
     case LISTEN:
-        //this->syscall_listen(syscallUUID, pid, param.param1_int, param.param2_int);
+        ret = this->syscall_listen(syscallUUID, pid, param.param1_int, param.param2_int);
         break;
     case ACCEPT:
-        //this->syscall_accept(syscallUUID, pid, param.param1_int,
-        //      static_cast<struct sockaddr*>(param.param2_ptr),
-        //      static_cast<socklen_t*>(param.param3_ptr));
+        ret = this->syscall_accept(syscallUUID, pid, param.param1_int,
+              static_cast<struct sockaddr*>(param.param2_ptr),
+              static_cast<socklen_t*>(param.param3_ptr));
         break;
     case BIND:
         ret = this->syscall_bind(syscallUUID, pid, param.param1_int,
@@ -167,9 +85,9 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
         this->returnSystemCall(syscallUUID, ret);
         break;
     case GETPEERNAME:
-        //this->syscall_getpeername(syscallUUID, pid, param.param1_int,
-        //      static_cast<struct sockaddr *>(param.param2_ptr),
-        //      static_cast<socklen_t*>(param.param3_ptr));
+        ret = this->syscall_getpeername(syscallUUID, pid, param.param1_int,
+              static_cast<struct sockaddr *>(param.param2_ptr),
+              static_cast<socklen_t*>(param.param3_ptr));
         break;
     default:
         assert(0);
@@ -292,6 +210,27 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
     SystemCallInterface::removeFileDescriptor(pid, fd);
     return 0;
 }
+
+int TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+{
+    return 0;
+}
+
+int TCPAssignment::syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog)
+{
+    return 0;
+}
+
+int TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+{
+    return 0;
+}
+
+int TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+{
+    return 0;
+}
+
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 {
