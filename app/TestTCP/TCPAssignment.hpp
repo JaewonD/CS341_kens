@@ -47,6 +47,7 @@ public:
         unsigned long ip_address;
         unsigned short port;
         State state;
+        bool isBound;
     };
 
     std::map<int, Context> contextList;
