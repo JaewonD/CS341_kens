@@ -36,7 +36,8 @@ public:
     virtual void finalize();
     virtual ~TCPAssignment();
 
-    enum class State {
+    enum class State 
+    {
         // Add more states here
         CLOSED, LISTEN, SYN_SENT, SYN_RCVD, ESTABLISHED
     };
@@ -50,7 +51,7 @@ public:
         bool isBound;
     };
 
-    std::map<int, Context> contextList;
+    std::map<int, Context*> contextList;
 
     int syscall_socket(UUID syscallUUID, int pid, int domain, int type__unused);
     int syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen);
