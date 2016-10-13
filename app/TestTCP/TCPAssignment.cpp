@@ -117,9 +117,9 @@ int TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd, struct so
     if(TCPAssignment::contextList[sockfd] == NULL) return -1;
 
     /* Check for overlaps */
-    for (auto it = TCPAssignment::contextList.begin(); it != TCPAssignment::contextList.end(); it++)
+    for (auto it : TCPAssignment::contextList)
     {
-        Context* c = it->second;
+        Context* c = it.second;
         if (c->isBound)
         {
             if (c->port == new_port)
@@ -131,7 +131,7 @@ int TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd, struct so
                     break;
                 }
             }
-            else if (sockfd == it->first)
+            else if (sockfd == it.first)
             {
                 overlap_detected = true;
                 break;
