@@ -16,8 +16,29 @@
 #include <netinet/ip.h>
 #include <netinet/in.h>
 #include <map>
+#include <mutex>
 
 #include <E/E_TimerModule.hpp>
+
+#define PACKETLOC_SRC_IP 26
+#define PACKETLOC_SRC_PORT 34
+#define PACKETLOC_DEST_IP 30
+#define PACKETLOC_DEST_PORT 36
+#define PACKETLOC_TCP_HEADER_SIZE 46
+#define PACKETLOC_TCP_FLAGS 47
+#define PACKETLOC_SEQNO 38
+#define PACKETLOC_ACKNO 42
+#define PACKETLOC_CHKSUM 50
+#define PACKETLOC_WINDOWSIZE 48
+
+#define FLAG_SYN 2
+#define FLAG_SYNACK 18
+#define FLAG_ACK 16
+#define FLAG_FIN 1
+
+#define SEQ_NUMBER_START 0xaaafafaa
+
+#define SIZE_EMPTY_PACKET 54
 
 namespace E
 {
@@ -42,13 +63,29 @@ public:
         CLOSED, LISTEN, SYN_SENT, SYN_RCVD, ESTABLISHED
     };
 
+    class Backlog
+    {
+    public:
+        bool in_use;
+        unsigned long remote_ip_address;
+        unsigned int remote_port;
+        unsigned int seq_number;
+        State state;
+    };
+
     class Context
     {
     public:
-        unsigned long ip_address;
-        unsigned short port;
+        unsigned int local_ip_address;
+        unsigned short local_port;
+        unsigned int remote_ip_address;
+        unsigned short remote_port;
+        unsigned int seq_number;
         State state;
         bool isBound;
+        UUID syscall_hold_ID;
+        int backlog_size;
+        Backlog* backlog;
     };
 
     std::map<int, Context*> contextList;
@@ -60,7 +97,16 @@ public:
     int syscall_connect(UUID syscallUUID, int pid, int sockfd, const struct sockaddr *addr, socklen_t addrlen);
     int syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog);
     int syscall_accept(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+    int return_syscall_accept(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen, Context* context, Backlog* backlog);
     int syscall_getpeername(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+
+    int retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port,
+        unsigned int remote_ip_address, unsigned short remote_port);
+    int retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port);
+    void packet_fill_checksum(Packet* packet);
+    void fill_packet_header(Packet* packet, unsigned int src_ip, unsigned int dest_ip,
+        unsigned short src_port, unsigned short dest_port, char size, char syn, short window_size,
+        unsigned int seq_number);
 
 
 protected:
