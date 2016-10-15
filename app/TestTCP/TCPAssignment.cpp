@@ -112,20 +112,8 @@ int TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int domain, int typ
     context->state = TCPAssignment::State::CLOSED;
     context->seq_number = SEQ_NUMBER_START;
     context->backlog_size = 0;
-    TCPAssignment::contextList.insert(std::make_pair(new_fd, context));
-    printf("Created socket fd: %d, pid: %d\n", new_fd, pid);
-    printf("Current context list\n");
-    for (auto it : TCPAssignment::contextList)
-    {
-        Context* c = it.second;
-        if (it.first < 3)
-        {
-            printf("fd: %d\n", it.first);
-            printf("local addr: %x\n", c->local_ip_address);
-            printf("local port: %x\n", c->local_port);
-        }
-       
-    }
+    TCPAssignment::contextList[pid][new_fd] = context;
+    //printf("Created socket - pid: %d, fd: %d\n", pid, new_fd);
     return new_fd;
 }
 
@@ -137,10 +125,10 @@ int TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd, struct so
     bool overlap_detected = false;
 
     /* Check for valid fd */
-    if (TCPAssignment::contextList[sockfd] == NULL) return -1;
+    if (TCPAssignment::contextList[pid][sockfd] == NULL) return -1;
 
     /* Check for overlaps */
-    for (auto it : TCPAssignment::contextList)
+    for (auto it : TCPAssignment::contextList[pid])
     {
         Context* c = it.second;
         if (c->isBound)
@@ -169,7 +157,7 @@ int TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd, struct so
     }
 
     /* Overlap not detected, add new data into the list. */
-    Context* bind_context = TCPAssignment::contextList[sockfd];
+    Context* bind_context = TCPAssignment::contextList[pid][sockfd];
     bind_context->local_ip_address = new_ip_address;
     bind_context->local_port = new_port;
     bind_context->isBound = true;
@@ -180,7 +168,7 @@ int TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd, struct so
 int TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 {
     int success = -1;
-    Context* c = TCPAssignment::contextList[sockfd];
+    Context* c = TCPAssignment::contextList[pid][sockfd];
 
     /* Check for valid fd */
     if (c == NULL) return -1;
@@ -202,14 +190,23 @@ int TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int sockfd, st
 
 int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
 {
-    Context* context = TCPAssignment::contextList[fd];
+    Context* context = TCPAssignment::contextList[pid][fd];
     if (context->backlog_size > 0)
     {
         free(context->backlog);
     }
     free(context);
-    TCPAssignment::contextList.erase(fd);
-    TCPAssignment::accept_waiting_lists.erase(fd);
+    for (auto aw : TCPAssignment::accept_waiting_lists[pid][fd])
+    {
+        free(aw);
+    }
+    for (auto blg : TCPAssignment::established_backlog_lists[pid][fd])
+    {
+        free(blg);
+    }
+    TCPAssignment::contextList[pid].erase(fd);
+    TCPAssignment::accept_waiting_lists[pid].erase(fd);
+    TCPAssignment::established_backlog_lists[pid].erase(fd);
     SystemCallInterface::removeFileDescriptor(pid, fd);
     return 0;
 }
@@ -217,7 +214,7 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
 int TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
     /* Check for valid fd */
-    if (TCPAssignment::contextList[sockfd] == NULL) return -1;
+    if (TCPAssignment::contextList[pid][sockfd] == NULL) return -1;
 
     Packet* synPacket = allocatePacket(SIZE_EMPTY_PACKET);
     unsigned int src_ip;
@@ -229,19 +226,18 @@ int TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, const 
     dest_port = ((struct sockaddr_in*)addr)->sin_port;
     bool success_retrive_src = false;
     /* If the local socket fd is already bound to some port, we don't need to do implicit bind. */
-    if (TCPAssignment::contextList[sockfd]->isBound)
+    if (TCPAssignment::contextList[pid][sockfd]->isBound)
     {
-        src_ip = TCPAssignment::contextList[sockfd]->local_ip_address;
-        src_port = TCPAssignment::contextList[sockfd]->local_port;
+        src_ip = TCPAssignment::contextList[pid][sockfd]->local_ip_address;
+        src_port = TCPAssignment::contextList[pid][sockfd]->local_port;
         success_retrive_src = true;
     }
     /* Otherwise, we assign random port number and bind implicitly. */
     while (!success_retrive_src)
     {
         src_port = htons(rand() % 40000 + 2000);
-        int interface_number = HostModule::getHost()->getRoutingTable((const uint8_t *)&dest_ip);
-        printf("interface_number: %d\n", interface_number);
-        bool ip_retrived = HostModule::getHost()->getIPAddr((uint8_t*)&src_ip, interface_number);
+        //int interface_number = HostModule::getHost()->getRoutingTable((const uint8_t *)&dest_ip);
+        bool ip_retrived = HostModule::getHost()->getIPAddr((uint8_t*)&src_ip, 0);
         if (!ip_retrived) {
             break;
         }
@@ -264,7 +260,7 @@ int TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, const 
         return -1;
     }
 
-    Context* context = TCPAssignment::contextList[sockfd];
+    Context* context = TCPAssignment::contextList[pid][sockfd];
 
     /* Setup header fields */
     char size = 5;
@@ -291,7 +287,7 @@ int TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, const 
 int TCPAssignment::syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog)
 {
     /* Check for valid fd */
-    Context* context = TCPAssignment::contextList[sockfd];
+    Context* context = TCPAssignment::contextList[pid][sockfd];
     if (context == NULL) return -1;
     if (context->state != TCPAssignment::State::CLOSED) return -2;
 
@@ -305,9 +301,9 @@ int TCPAssignment::syscall_listen(UUID syscallUUID, int pid, int sockfd, int bac
     }
 
     std::list<AcceptWaiting*> awl;
-    TCPAssignment::accept_waiting_lists.insert(std::make_pair(sockfd, awl));
+    TCPAssignment::accept_waiting_lists[pid][sockfd] = awl;
     std::list<Backlog*> blgl;
-    TCPAssignment::established_backlog_lists.insert(std::make_pair(sockfd, blgl));
+    TCPAssignment::established_backlog_lists[pid][sockfd] = blgl;
     context->state = TCPAssignment::State::LISTEN;
 
     return 0;
@@ -315,12 +311,12 @@ int TCPAssignment::syscall_listen(UUID syscallUUID, int pid, int sockfd, int bac
 
 int TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 {
-    Context* c = TCPAssignment::contextList[sockfd];
+    Context* c = TCPAssignment::contextList[pid][sockfd];
     if (c == NULL) return -1;
     if (c->state != TCPAssignment::State::LISTEN) return -1;
 
     // Find established backlog
-    if (TCPAssignment::established_backlog_lists[sockfd].empty())
+    if (TCPAssignment::established_backlog_lists[pid][sockfd].empty())
     {
         AcceptWaiting* aw = (AcceptWaiting*) malloc (sizeof (AcceptWaiting));
         aw->syscallUUID = syscallUUID;
@@ -328,13 +324,12 @@ int TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int sockfd, struct 
         aw->sockfd = sockfd;
         aw->addr = addr;
         aw->addrlen = addrlen;
-        //c->accept_waiting_list.push_back(aw);
-        TCPAssignment::accept_waiting_lists[sockfd].push_back(aw);
+        TCPAssignment::accept_waiting_lists[pid][sockfd].push_back(aw);
         return -2;
     }
 
-    Backlog* backlog = TCPAssignment::established_backlog_lists[sockfd].front();
-    TCPAssignment::established_backlog_lists[sockfd].pop_front();
+    Backlog* backlog = TCPAssignment::established_backlog_lists[pid][sockfd].front();
+    TCPAssignment::established_backlog_lists[pid][sockfd].pop_front();
 
     return TCPAssignment::return_syscall_accept(syscallUUID, pid, sockfd, addr, addrlen, c, backlog);
     //return this->createFileDescriptor(pid);
@@ -354,7 +349,7 @@ int TCPAssignment::return_syscall_accept
     new_context->isBound = true;
     new_context->syscall_hold_ID = 0;
     new_context->backlog_size = 0;
-    TCPAssignment::contextList.insert(std::make_pair(new_fd, new_context));
+    TCPAssignment::contextList[pid][new_fd] = new_context;
 
     int ret = TCPAssignment::syscall_getpeername(syscallUUID, pid, new_fd, addr, addrlen);
     if (ret < -1) // shouldn't happen
@@ -371,7 +366,7 @@ int TCPAssignment::return_syscall_accept
 int TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 {
     int success = -1;
-    Context* c = TCPAssignment::contextList[sockfd];
+    Context* c = TCPAssignment::contextList[pid][sockfd];
     if (c == NULL) return -1;
     if (c->isBound)
     {
@@ -388,44 +383,48 @@ int TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd, st
     return success;
 }
 
-/* Iterate through context list and find the context with given parameters.
-   Return file descriptor */
-int TCPAssignment::retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port,
-        unsigned int remote_ip_address, unsigned short remote_port)
+/* Iterate through context list and find the context with given parameters. */
+bool TCPAssignment::retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port,
+        unsigned int remote_ip_address, unsigned short remote_port, int* pid, int* fd)
 {
-    int fd = -1;
     for (auto it : TCPAssignment::contextList)
     {
-        Context* c = it.second;
-        if ((c->remote_ip_address == remote_ip_address) &&
-            (c->remote_port == remote_port) &&
-            (c->local_ip_address == local_ip_address || c->local_ip_address == htonl(INADDR_ANY)) &&
-            (c->local_port == local_port))
+        for (auto it2 : it.second)
         {
-            fd = it.first;
-            break;
-        }
-        else {
+            Context* c = it2.second;
+            if ((c->remote_ip_address == remote_ip_address) &&
+                (c->remote_port == remote_port) &&
+                (c->local_ip_address == local_ip_address || c->local_ip_address == htonl(INADDR_ANY)) &&
+                (c->local_port == local_port))
+            {
+                *pid = it.first;
+                *fd = it2.first;
+                return true;
+            }
         }
     }
-    return fd;
+    return false;
 }
 
 /* Overloaded function with above - with less parameters */
-int TCPAssignment::retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port)
+bool TCPAssignment::retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port,
+    int* pid, int* fd)
 {
-    int fd = -1;
     for (auto it : TCPAssignment::contextList)
     {
-        Context* c = it.second;
-        if ((c->local_ip_address == local_ip_address || c->local_ip_address == htonl(INADDR_ANY)) &&
-            c->local_port == local_port)
+        for (auto it2 : it.second)
         {
-            fd = it.first;
-            break;
+            Context* c = it2.second;
+            if ((c->local_ip_address == local_ip_address || c->local_ip_address == htonl(INADDR_ANY)) &&
+                (c->local_port == local_port))
+            {
+                *pid = it.first;
+                *fd = it2.first;
+                return true;
+            }
         }
     }
-    return fd;
+    return false;
 }
 
 void TCPAssignment::packet_fill_checksum(Packet* packet)
@@ -497,13 +496,15 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
     // 1. Return from connect (While we are client and in SYN_SENT state, received SYNACK packet)
     if (flag == FLAG_SYNACK)
     {
-        int fd = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, src_ip, src_port);
-        if (fd == -1)
+        int pid = -1;
+        int fd = -1;
+        bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, src_ip, src_port, &pid, &fd);
+        if (!suc)
         {
             freePacket(packet);
             return;
         }
-        Context* c = TCPAssignment::contextList[fd];
+        Context* c = TCPAssignment::contextList[pid][fd];
         if (c->state == TCPAssignment::State::SYN_SENT)
         {
             // Send ACK in response.
@@ -528,13 +529,14 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
     // 2. As a server, when we receive SYN, send SYN/ACK and change our state.
     else if (flag == FLAG_SYN)
     {
-        int fd = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port);
-        if (fd == -1)
+        int pid, fd;
+        bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, &pid, &fd);
+        if (!suc) 
         {
             freePacket(packet);
             return;
         }
-        Context* c = TCPAssignment::contextList[fd];
+        Context* c = TCPAssignment::contextList[pid][fd];
         if (c->state == TCPAssignment::State::LISTEN)
         {
             // Find the empty backlog space
@@ -573,13 +575,14 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
     // 3. From the server, when we receive ACK while we are SYN_RCVD state, we are connected.
     else if (flag == FLAG_ACK)
     {
-        int fd = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port);
-        if (fd == -1)
+        int pid, fd;
+        bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, &pid, &fd);
+        if (!suc)
         {
             freePacket(packet);
             return;
         }
-        Context* c = TCPAssignment::contextList[fd];
+        Context* c = TCPAssignment::contextList[pid][fd];
         if (c->state == TCPAssignment::State::LISTEN)
         {
             // Find the matching backlog space
@@ -604,24 +607,24 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                     estab_bg->remote_port = backlog->remote_port;
                     estab_bg->seq_number = backlog->seq_number;
                     estab_bg->state = TCPAssignment::State::ESTABLISHED;
-                    TCPAssignment::established_backlog_lists[fd].push_back(estab_bg);
+                    TCPAssignment::established_backlog_lists[pid][fd].push_back(estab_bg);
                     backlog->in_use = false;
                     /* If there's any waiting accepts, return this. */
-                    if (!TCPAssignment::accept_waiting_lists[fd].empty())
+                    if (!TCPAssignment::accept_waiting_lists[pid][fd].empty())
                     {
-                        AcceptWaiting* aw = TCPAssignment::accept_waiting_lists[fd].front();
+                        AcceptWaiting* aw = TCPAssignment::accept_waiting_lists[pid][fd].front();
                         UUID syscallUUID = aw->syscallUUID;
-                        int pid = aw->pid;
-                        int sockfd = aw->sockfd;
+                        int waiting_pid = aw->pid;
+                        int waiting_fd = aw->sockfd;
                         struct sockaddr *addr = aw->addr;
                         socklen_t *addrlen = aw->addrlen;
-                        int new_fd = TCPAssignment::return_syscall_accept(syscallUUID, pid, sockfd, addr, addrlen, c, estab_bg);
+                        int new_fd = TCPAssignment::return_syscall_accept(syscallUUID, waiting_pid, waiting_fd, addr, addrlen, c, estab_bg);
                         if (new_fd != -2)
                         {
                             this->returnSystemCall(syscallUUID, new_fd);
+                            TCPAssignment::established_backlog_lists[pid][fd].pop_front();
+                            TCPAssignment::accept_waiting_lists[pid][fd].pop_front();
                         }
-                        TCPAssignment::established_backlog_lists[fd].pop_front();
-                        TCPAssignment::accept_waiting_lists[fd].pop_front();
                         free(aw);
                     }
                 }

@@ -98,9 +98,9 @@ public:
         Backlog* backlog;
     };
 
-    std::map<int, Context*> contextList;
-    std::map<int, std::list<AcceptWaiting*>> accept_waiting_lists;
-    std::map<int, std::list<Backlog*>> established_backlog_lists;
+    std::map<int, std::map<int, Context*>> contextList;
+    std::map<int, std::map<int, std::list<AcceptWaiting*>>> accept_waiting_lists;
+    std::map<int, std::map<int, std::list<Backlog*>>> established_backlog_lists;
 
     int syscall_socket(UUID syscallUUID, int pid, int domain, int type__unused);
     int syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen);
@@ -112,9 +112,9 @@ public:
     int return_syscall_accept(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen, Context* context, Backlog* backlog);
     int syscall_getpeername(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 
-    int retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port,
-        unsigned int remote_ip_address, unsigned short remote_port);
-    int retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port);
+    bool retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port,
+        unsigned int remote_ip_address, unsigned short remote_port, int* pid, int* fd);
+    bool retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port, int* pid, int* fd);
     void packet_fill_checksum(Packet* packet);
     void fill_packet_header(Packet* packet, unsigned int src_ip, unsigned int dest_ip,
         unsigned short src_port, unsigned short dest_port, char size, char syn, short window_size,
