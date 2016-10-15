@@ -16,7 +16,7 @@
 #include <netinet/ip.h>
 #include <netinet/in.h>
 #include <map>
-#include <mutex>
+#include <list>
 
 #include <E/E_TimerModule.hpp>
 
@@ -63,12 +63,22 @@ public:
         CLOSED, LISTEN, SYN_SENT, SYN_RCVD, ESTABLISHED
     };
 
+    class AcceptWaiting
+    {
+    public:
+        UUID syscallUUID;
+        int pid;
+        int sockfd;
+        struct sockaddr *addr;
+        socklen_t *addrlen;
+    };
+
     class Backlog
     {
     public:
         bool in_use;
-        unsigned long remote_ip_address;
-        unsigned int remote_port;
+        unsigned int remote_ip_address;
+        unsigned short remote_port;
         unsigned int seq_number;
         State state;
     };
@@ -89,6 +99,8 @@ public:
     };
 
     std::map<int, Context*> contextList;
+    std::map<int, std::list<AcceptWaiting*>> accept_waiting_lists;
+    std::map<int, std::list<Backlog*>> established_backlog_lists;
 
     int syscall_socket(UUID syscallUUID, int pid, int domain, int type__unused);
     int syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen);
