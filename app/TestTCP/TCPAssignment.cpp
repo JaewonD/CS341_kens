@@ -216,9 +216,10 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
     TCPAssignment::fill_packet_header(finPacket, src_ip, dest_ip, src_port, dest_port, size, syn, window_size, *seq_number);
 
     this->sendPacket("IPv4", finPacket);
-
+    
     //updating contextList information
     context->syscall_hold_ID = syscallUUID;
+    *seq_number = htonl(ntohl(*seq_number) + 1);
     if (context->state == TCPAssignment::State::ESTABLISHED)
         context->state = TCPAssignment::State::FIN_WAIT_1;
     else if(context->state == TCPAssignment::State::CLOSE_WAIT)
@@ -539,7 +540,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             unsigned int* seq_number = &(c->seq_number);
             TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port,
                 5, FLAG_ACK, htons(51200), *seq_number);
-            *seq_number = htonl(ntohl(*seq_number) + 1);
+            //*seq_number = htonl(ntohl(*seq_number) + 1);
             /* Ack number is manually written on header */
             unsigned int ack_number;
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
@@ -663,32 +664,16 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 		else if (c->state == TCPAssignment::State::CLOSING)
         {
             //Sends ACK
-            Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
-            unsigned int* seq_number= &(c->seq_number);
-            unsigned int ack_number;
-            TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
-                FLAG_ACK, htons(51200), *seq_number);
-            *seq_number = htonl(ntohl(*seq_number)+1);
-            packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
-            ack_number=htonl(ntohl(ack_number)+1);
-            newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
-            this->sendPacket("IPv4", newPacket);
-
             //State becomes TIME_WAIT;
-            //Time currentTime = TimeUtil::makeTime()
             Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
-            UUID timeUUID = TimerModule::addTimer((void* )newPacket, 2*msl);
+            UUID timeUUID = TimerModule::addTimer((void* )packet, 2*msl);
             c->state = TCPAssignment::State::TIME_WAIT;
             c->timer_ID=timeUUID;
         }
         //Get Ack in FIN_WAIT_1 state -> simply changes the state into FIN_WAIT_2
         else if (c->state == TCPAssignment::State::FIN_WAIT_1)
         {
-            unsigned int ack_number;
-            packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
-            ack_number=htonl(ntohl(ack_number)+1);
             c->state=TCPAssignment::State::FIN_WAIT_2;
-            c->seq_number++;
         }
         //Get Ack in LAST_ACK state -> Ends connection in passive side, remove backlog&established, but do not remove context
         else if (c->state == TCPAssignment::State::LAST_ACK)
@@ -717,7 +702,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             unsigned int ack_number;
             TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
                 FLAG_ACK, htons(51200), *seq_number);
-            *seq_number = htonl(ntohl(*seq_number)+1);
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
@@ -735,7 +719,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             unsigned int ack_number;
             TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
                 FLAG_ACK, htons(51200), *seq_number);
-            *seq_number = htonl(ntohl(*seq_number)+1);
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
@@ -753,7 +736,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             unsigned int ack_number;
             TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
                 FLAG_ACK, htons(51200), *seq_number);
-            *seq_number = htonl(ntohl(*seq_number)+1);
+//            *seq_number = htonl(ntohl(*seq_number)+1);
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
@@ -786,15 +769,15 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             unsigned int ack_number;
             TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
                 FLAG_ACK, htons(51200), *seq_number);
-            *seq_number = htonl(ntohl(*seq_number)+1);
+  //          *seq_number = htonl(ntohl(*seq_number)+1);
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
             this->sendPacket("IPv4", newPacket);
 
             //Change the state into TIME_WAIT;
-            Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
-            UUID timeUUID = TimerModule::addTimer((void* )newPacket, 2*msl);
+            //Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
+            UUID timeUUID = TimerModule::addTimer((void* )newPacket, 120000000000);
             c->state = TCPAssignment::State::TIME_WAIT;
             c->timer_ID=timeUUID;
         }
