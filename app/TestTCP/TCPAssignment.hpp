@@ -19,6 +19,7 @@
 #include <list>
 
 #include <E/E_TimerModule.hpp>
+#include <E/E_TimeUtil.hpp>
 
 #define PACKETLOC_SRC_IP 26
 #define PACKETLOC_SRC_PORT 34
@@ -41,6 +42,8 @@
 #define SEQ_NUMBER_START 0xaaafafaa
 
 #define SIZE_EMPTY_PACKET 54
+
+#define MSL 60
 
 namespace E
 {
@@ -96,6 +99,7 @@ public:
         State state;
         bool isBound;
         UUID syscall_hold_ID;
+        UUID timer_ID;
         int backlog_size;
         Backlog* backlog;
     };
@@ -121,7 +125,7 @@ public:
     void fill_packet_header(Packet* packet, unsigned int src_ip, unsigned int dest_ip,
         unsigned short src_port, unsigned short dest_port, char size, char syn, short window_size,
         unsigned int seq_number);
-
+    void closeSocket(unsigned int pid, unsigned int fd);
 
 protected:
     virtual void systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param) final;
