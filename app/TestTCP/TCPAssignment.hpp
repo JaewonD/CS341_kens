@@ -35,6 +35,8 @@
 #define FLAG_SYNACK 18
 #define FLAG_ACK 16
 #define FLAG_FIN 1
+#define FLAG_RST 4
+#define FLAG_FINACK 17
 
 #define SEQ_NUMBER_START 0xaaafafaa
 
@@ -60,7 +62,7 @@ public:
     enum class State 
     {
         // Add more states here
-        CLOSED, LISTEN, SYN_SENT, SYN_RCVD, ESTABLISHED
+        CLOSED, LISTEN, SYN_SENT, SYN_RCVD, ESTABLISHED, CLOSING, FIN_WAIT_1, FIN_WAIT_2, TIME_WAIT, CLOSE_WAIT, LAST_ACK
     };
 
     class AcceptWaiting
