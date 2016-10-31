@@ -242,20 +242,7 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
     if (context->state == TCPAssignment::State::ESTABLISHED || context->state == TCPAssignment::State::SYN_RCVD)
         context->state = TCPAssignment::State::FIN_WAIT_1;
     else if(context->state == TCPAssignment::State::CLOSE_WAIT)
-        context->state = TCPAssignment::State::LAST_ACK;    
-    /*if (context->backlog_size > 0)
-    {
-        free(context->backlog);
-    }
-    free(context);  
-    for (auto aw : TCPAssignment::accept_waiting_lists[pid][fd])
-    {
-        free(aw);
-    }
-    for (auto blg : TCPAssignment::established_backlog_lists[pid][fd])
-    {
-        free(blg);
-    }*/
+        context->state = TCPAssignment::State::LAST_ACK;
     return 0;
 }
 
@@ -769,34 +756,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             return;
         }
         Context* c = TCPAssignment::contextList[pid][fd];
-        /*
-        if (c->state == TCPAssignment::State::LISTEN)
-        {
-            bool suc2 = TCPAssignment::retrieve_backlog_when_FIN(src_ip, src_port, &bggg);
-            printf("suc: %d, suc2: %d\n", suc, suc2);
-            if (!suc2) 
-            {
-                freePacket(packet);
-                return;
-            }
-            else
-            {
-                Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
-                unsigned int* seq_number= &(bggg->seq_number);
-                unsigned int ack_number;
-                TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
-                    FLAG_ACK, htons(51200), *seq_number);
-                packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
-                ack_number=htonl(ntohl(ack_number)+1);
-                newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
-                TCPAssignment::packet_fill_checksum(newPacket);
-                printf("Received FIN, while I'm established - backlog fin\n");
-                this->sendPacket("IPv4", newPacket);
 
-                //Change the state into CLOSE_WAIT;
-                bggg->state = TCPAssignment::State::CLOSE_WAIT;
-            }
-        } */
         //Passive Closing. Send ACK, and wait for change State into CLOSE_WAIT
         if (c->state == TCPAssignment::State::ESTABLISHED)
         {
@@ -902,7 +862,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 
 void TCPAssignment::closeSocket(unsigned int pid, unsigned int fd)
 {
-/*    Context* context = TCPAssignment::contextList[pid][fd];
+    Context* context = TCPAssignment::contextList[pid][fd];
     if (context->backlog_size > 0)
     {
         free(context->backlog);
@@ -914,12 +874,12 @@ void TCPAssignment::closeSocket(unsigned int pid, unsigned int fd)
     for (auto blg : TCPAssignment::established_backlog_lists[pid][fd])
     {
         free(blg);
-    }*/
+    }
     TCPAssignment::contextList[pid].erase(fd);
     TCPAssignment::accept_waiting_lists[pid].erase(fd);
     TCPAssignment::established_backlog_lists[pid].erase(fd);
     SystemCallInterface::removeFileDescriptor(pid, fd);
-//    free(context);
+    free(context);
 }
 
 void TCPAssignment::timerCallback(void* payload)
@@ -946,6 +906,8 @@ void TCPAssignment::timerCallback(void* payload)
     }
     //After extracting informations, removing fd/pid pair from contextList/backlog/established
     TCPAssignment::closeSocket(pid, fd);
+    freePacket(packet);
+    return;
 }
 
 
