@@ -19,6 +19,7 @@
 #include <list>
 
 #include <E/E_TimerModule.hpp>
+#include <E/E_TimeUtil.hpp>
 
 #define PACKETLOC_SRC_IP 26
 #define PACKETLOC_SRC_PORT 34
@@ -35,10 +36,14 @@
 #define FLAG_SYNACK 18
 #define FLAG_ACK 16
 #define FLAG_FIN 1
+#define FLAG_RST 4
+#define FLAG_FINACK 17
 
 #define SEQ_NUMBER_START 0xaaafafaa
 
 #define SIZE_EMPTY_PACKET 54
+
+#define MSL 60
 
 namespace E
 {
@@ -60,7 +65,7 @@ public:
     enum class State 
     {
         // Add more states here
-        CLOSED, LISTEN, SYN_SENT, SYN_RCVD, ESTABLISHED
+        CLOSED, LISTEN, SYN_SENT, SYN_RCVD, ESTABLISHED, CLOSING, FIN_WAIT_1, FIN_WAIT_2, TIMED_WAIT, CLOSE_WAIT, LAST_ACK
     };
 
     class AcceptWaiting
@@ -94,6 +99,7 @@ public:
         State state;
         bool isBound;
         UUID syscall_hold_ID;
+        UUID timer_ID;
         int backlog_size;
         Backlog* backlog;
     };
@@ -115,11 +121,13 @@ public:
     bool retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port,
         unsigned int remote_ip_address, unsigned short remote_port, int* pid, int* fd);
     bool retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port, int* pid, int* fd);
+    bool retrieve_backlog_when_FIN (unsigned int remote_ip_address, unsigned short remote_port, Backlog** bg);
+
     void packet_fill_checksum(Packet* packet);
     void fill_packet_header(Packet* packet, unsigned int src_ip, unsigned int dest_ip,
         unsigned short src_port, unsigned short dest_port, char size, char syn, short window_size,
         unsigned int seq_number);
-
+    void closeSocket(unsigned int pid, unsigned int fd);
 
 protected:
     virtual void systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param) final;
