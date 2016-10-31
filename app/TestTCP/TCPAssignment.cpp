@@ -198,6 +198,11 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
         context->state != TCPAssignment::State::SYN_SENT &&
         context->state != TCPAssignment::State::SYN_RCVD) return -1;
     //Sending close signal
+    if (context->state == TCPAssignment::State::SYN_SENT)
+    {
+        closeSocket(pid, fd);
+        return 0;
+    }
     Packet* finPacket = allocatePacket(SIZE_EMPTY_PACKET);
     unsigned int src_ip;
     unsigned int dest_ip;
@@ -214,30 +219,31 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
     short window_size = htons(51200);
     unsigned int* seq_number = &(context->seq_number);
     TCPAssignment::fill_packet_header(finPacket, src_ip, dest_ip, src_port, dest_port, size, syn, window_size, *seq_number);
+    TCPAssignment::packet_fill_checksum(finPacket);
 
     this->sendPacket("IPv4", finPacket);
+
     
     //updating contextList information
     context->syscall_hold_ID = syscallUUID;
     *seq_number = htonl(ntohl(*seq_number) + 1);
-    if (context->state == TCPAssignment::State::ESTABLISHED)
+    if (context->state == TCPAssignment::State::ESTABLISHED || context->state == TCPAssignment::State::SYN_RCVD)
         context->state = TCPAssignment::State::FIN_WAIT_1;
     else if(context->state == TCPAssignment::State::CLOSE_WAIT)
-        context->state = TCPAssignment::State::LAST_ACK;
-    //Freeing socket/backlog/data stored in there
-    if (context->backlog_size > 0)
+        context->state = TCPAssignment::State::LAST_ACK;    
+ /*   if (context->backlog_size > 0)
     {
         free(context->backlog);
     }
-    free(context);
+    free(context);  
     for (auto aw : TCPAssignment::accept_waiting_lists[pid][fd])
     {
-        free(aw); 
+        free(aw);
     }
     for (auto blg : TCPAssignment::established_backlog_lists[pid][fd])
     {
         free(blg);
-    }
+    }*/
     return 0;
 }
 
@@ -266,8 +272,8 @@ int TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, const 
     while (!success_retrive_src)
     {
         src_port = htons(rand() % 40000 + 2000);
-        //int interface_number = HostModule::getHost()->getRoutingTable((const uint8_t *)&dest_ip);
-        bool ip_retrived = HostModule::getHost()->getIPAddr((uint8_t*)&src_ip, 0);
+        int interface_number = HostModule::getHost()->getRoutingTable((const uint8_t *)&dest_ip);
+        bool ip_retrived = HostModule::getHost()->getIPAddr((uint8_t*)&src_ip, interface_number);
         if (!ip_retrived) {
             break;
         }
@@ -605,7 +611,9 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
     else if (flag == FLAG_ACK)
     {
         int pid, fd;
+        
         bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, &pid, &fd);
+
         if (!suc)
         {
             freePacket(packet);
@@ -685,10 +693,14 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
     // 4. Receiving FIN means we are in 4-way handshaking(Finishing Connection)
     else if (flag == FLAG_FIN)
     {
+        printf("I got FIN");
         int pid, fd;
+
         bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, &pid, &fd);
+
         if (!suc)
         {
+            printf("Can't find pid/fd pair. try again\n");
             freePacket(packet);
             return;
         }
@@ -697,6 +709,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         if (c->state == TCPAssignment::State::ESTABLISHED)
         {
             //Sends ACK
+            printf("Why do you close???");
             Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
             unsigned int* seq_number= &(c->seq_number);
             unsigned int ack_number;
@@ -714,6 +727,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         else if (c->state == TCPAssignment::State::FIN_WAIT_1)
         {
             //Sends ACK
+            printf("Simultaneous close");
             Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
             unsigned int* seq_number= &(c->seq_number);
             unsigned int ack_number;
@@ -730,6 +744,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         //third handshake. Receiver sent all of its remaining packets. Change State into LAST_ACK
         else if (c->state == TCPAssignment::State::FIN_WAIT_2)
         {
+            printf("Last Ack. No turning back");
             //Sending ACK packet
             Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
             unsigned int* seq_number= &(c->seq_number);
@@ -788,10 +803,24 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 
 void TCPAssignment::closeSocket(unsigned int pid, unsigned int fd)
 {
+    Context* context = TCPAssignment::contextList[pid][fd];
+    if (context->backlog_size > 0)
+    {
+        free(context->backlog);
+    }
+    for (auto aw : TCPAssignment::accept_waiting_lists[pid][fd])
+    {
+        free(aw);
+    }
+    for (auto blg : TCPAssignment::established_backlog_lists[pid][fd])
+    {
+        free(blg);
+    }
     TCPAssignment::contextList[pid].erase(fd);
     TCPAssignment::accept_waiting_lists[pid].erase(fd);
     TCPAssignment::established_backlog_lists[pid].erase(fd);
     SystemCallInterface::removeFileDescriptor(pid, fd);
+    free(context);
 }
 
 void TCPAssignment::timerCallback(void* payload)
