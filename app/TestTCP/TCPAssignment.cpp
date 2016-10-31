@@ -674,10 +674,20 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         for 2*MSL*/
 		else if (c->state == TCPAssignment::State::CLOSING)
         {
+            Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
+            unsigned int* seq_number= &(c->seq_number);
+            unsigned int ack_number;
+            TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
+                FLAG_ACK, htons(51200), *seq_number);
+//            *seq_number = htonl(ntohl(*seq_number)+1);
+            packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
+            ack_number=htonl(ntohl(ack_number)+1);
+            newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
+
             //Sends ACK
             //State becomes TIMED_WAIT;
             Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
-            UUID timeUUID = TimerModule::addTimer((void* )packet, 2*msl);
+            UUID timeUUID = TimerModule::addTimer((void* )newPacket, 2*msl);
             c->state = TCPAssignment::State::TIMED_WAIT;
             c->timer_ID=timeUUID;
         }
@@ -758,11 +768,13 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
+            Packet* copyPacket=this->clonePacket(packet);
             this->sendPacket("IPv4", newPacket);
 
             //Change the state into TIMED_WAIT;
             Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
-            UUID timeUUID = TimerModule::addTimer((void* )newPacket, 2*msl);
+            UUID timeUUID = TimerModule::addTimer((void* )copyPacket, 2*msl);
+
             c->state = TCPAssignment::State::TIMED_WAIT;
             c->timer_ID=timeUUID;
         }
@@ -791,11 +803,12 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
+            Packet* copyPacket=this->clonePacket(packet);
             this->sendPacket("IPv4", newPacket);
 
             //Change the state into TIMED_WAIT;
             Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
-            UUID timeUUID = TimerModule::addTimer((void* )newPacket, 2*msl);
+            UUID timeUUID = TimerModule::addTimer((void* )copyPacket, 2*msl);
             c->state = TCPAssignment::State::TIMED_WAIT;
             c->timer_ID=timeUUID;
         }
