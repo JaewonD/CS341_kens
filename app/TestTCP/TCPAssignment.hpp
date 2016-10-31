@@ -121,6 +121,8 @@ public:
     bool retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port,
         unsigned int remote_ip_address, unsigned short remote_port, int* pid, int* fd);
     bool retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port, int* pid, int* fd);
+    bool retrieve_backlog_when_FIN (unsigned int remote_ip_address, unsigned short remote_port, Backlog** bg);
+
     void packet_fill_checksum(Packet* packet);
     void fill_packet_header(Packet* packet, unsigned int src_ip, unsigned int dest_ip,
         unsigned short src_port, unsigned short dest_port, char size, char syn, short window_size,

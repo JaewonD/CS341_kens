@@ -213,6 +213,15 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
     unsigned short dest_port;
 
     src_ip = context->local_ip_address;
+    if (src_ip == 0)
+    {
+        int interface_number = HostModule::getHost()->getRoutingTable((const uint8_t *)&dest_ip);
+        bool ip_retrived = HostModule::getHost()->getIPAddr((uint8_t*)&src_ip, interface_number);
+        if (!ip_retrived) {
+            return -1;
+        }
+    }
+    
     src_port = context->local_port;
     dest_ip = context->remote_ip_address;
     dest_port = context->remote_port;
@@ -383,7 +392,7 @@ int TCPAssignment::return_syscall_accept
     new_context->remote_ip_address = b->remote_ip_address;
     new_context->remote_port = b->remote_port;
     new_context->seq_number = b->seq_number;
-    new_context->state = TCPAssignment::State::ESTABLISHED;
+    new_context->state = b->state;
     new_context->isBound = true;
     new_context->syscall_hold_ID = 0;
     new_context->backlog_size = 0;
@@ -458,6 +467,27 @@ bool TCPAssignment::retrieve_fd_from_context(unsigned int local_ip_address, unsi
                 *pid = it.first;
                 *fd = it2.first;
                 return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool TCPAssignment::retrieve_backlog_when_FIN (unsigned int remote_ip_address, unsigned short remote_port, Backlog** bg)
+{
+    for (auto it : TCPAssignment::established_backlog_lists)
+    {
+        for (auto it2 : it.second)
+        {
+            std::list<Backlog*> c = it2.second;
+            for (auto it3 : c)
+            {
+                if ((it3->remote_ip_address == remote_ip_address || it3->remote_ip_address == htonl(INADDR_ANY)) &&
+                    (it3->remote_port == remote_port))
+                {
+                    *bg = it3;
+                    return true;
+                }
             }
         }
     }
@@ -706,18 +736,67 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
     // 4. Receiving FIN means we are in 4-way handshaking(Finishing Connection)
     else if (flag == FLAG_FIN)
     {
-        //printf("I got FIN");
         int pid, fd;
+        Backlog* bggg;
 
-        bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, &pid, &fd);
+        bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, src_ip, src_port, &pid, &fd);
 
         if (!suc)
         {
-            //printf("Can't find pid/fd pair. try again\n");
+            bool suc2 = TCPAssignment::retrieve_backlog_when_FIN(src_ip, src_port, &bggg);
+            if (!suc2) 
+            {
+                freePacket(packet);
+                return;
+            }
+            else
+            {
+                Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
+                unsigned int* seq_number= &(bggg->seq_number);
+                unsigned int ack_number;
+                TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
+                    FLAG_ACK, htons(51200), *seq_number);
+                packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
+                ack_number=htonl(ntohl(ack_number)+1);
+                newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
+                TCPAssignment::packet_fill_checksum(newPacket);
+                this->sendPacket("IPv4", newPacket);
+
+                //Change the state into CLOSE_WAIT;
+                bggg->state = TCPAssignment::State::CLOSE_WAIT;
+            }
             freePacket(packet);
             return;
         }
         Context* c = TCPAssignment::contextList[pid][fd];
+        /*
+        if (c->state == TCPAssignment::State::LISTEN)
+        {
+            bool suc2 = TCPAssignment::retrieve_backlog_when_FIN(src_ip, src_port, &bggg);
+            printf("suc: %d, suc2: %d\n", suc, suc2);
+            if (!suc2) 
+            {
+                freePacket(packet);
+                return;
+            }
+            else
+            {
+                Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
+                unsigned int* seq_number= &(bggg->seq_number);
+                unsigned int ack_number;
+                TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
+                    FLAG_ACK, htons(51200), *seq_number);
+                packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
+                ack_number=htonl(ntohl(ack_number)+1);
+                newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
+                TCPAssignment::packet_fill_checksum(newPacket);
+                printf("Received FIN, while I'm established - backlog fin\n");
+                this->sendPacket("IPv4", newPacket);
+
+                //Change the state into CLOSE_WAIT;
+                bggg->state = TCPAssignment::State::CLOSE_WAIT;
+            }
+        } */
         //Passive Closing. Send ACK, and wait for change State into CLOSE_WAIT
         if (c->state == TCPAssignment::State::ESTABLISHED)
         {
@@ -731,7 +810,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             ack_number=htonl(ntohl(ack_number)+1);
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
             TCPAssignment::packet_fill_checksum(newPacket);
-
             this->sendPacket("IPv4", newPacket);
 
             //Change the state into CLOSE_WAIT;
