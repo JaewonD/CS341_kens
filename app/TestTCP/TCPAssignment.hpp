@@ -65,7 +65,7 @@ public:
     enum class State 
     {
         // Add more states here
-        CLOSED, LISTEN, SYN_SENT, SYN_RCVD, ESTABLISHED, CLOSING, FIN_WAIT_1, FIN_WAIT_2, TIME_WAIT, CLOSE_WAIT, LAST_ACK
+        CLOSED, LISTEN, SYN_SENT, SYN_RCVD, ESTABLISHED, CLOSING, FIN_WAIT_1, FIN_WAIT_2, TIMED_WAIT, CLOSE_WAIT, LAST_ACK
     };
 
     class AcceptWaiting

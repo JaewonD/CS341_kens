@@ -191,14 +191,17 @@ int TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int sockfd, st
 int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
 {
     Context* context = TCPAssignment::contextList[pid][fd];
-    if (context == NULL ) return -1; 
+    if (context == NULL) return -1; 
     //close called at valid state
-    if (context->state != TCPAssignment::State::ESTABLISHED &&
-        context->state != TCPAssignment::State::CLOSE_WAIT &&
-        context->state != TCPAssignment::State::SYN_SENT &&
-        context->state != TCPAssignment::State::SYN_RCVD) return -1;
+    if (context->state == TCPAssignment::State::FIN_WAIT_1 ||
+        context->state == TCPAssignment::State::FIN_WAIT_2 ||
+        context->state == TCPAssignment::State::CLOSING ||
+        context->state == TCPAssignment::State::LAST_ACK ||
+        context->state == TCPAssignment::State::TIMED_WAIT) return -1;
     //Sending close signal
-    if (context->state == TCPAssignment::State::SYN_SENT)
+    if (context->state == TCPAssignment::State::SYN_SENT ||
+        context->state == TCPAssignment::State::CLOSED ||
+        context->state == TCPAssignment::State::LISTEN)
     {
         closeSocket(pid, fd);
         return 0;
@@ -231,7 +234,7 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
         context->state = TCPAssignment::State::FIN_WAIT_1;
     else if(context->state == TCPAssignment::State::CLOSE_WAIT)
         context->state = TCPAssignment::State::LAST_ACK;    
- /*   if (context->backlog_size > 0)
+    /*if (context->backlog_size > 0)
     {
         free(context->backlog);
     }
@@ -672,10 +675,10 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 		else if (c->state == TCPAssignment::State::CLOSING)
         {
             //Sends ACK
-            //State becomes TIME_WAIT;
+            //State becomes TIMED_WAIT;
             Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
             UUID timeUUID = TimerModule::addTimer((void* )packet, 2*msl);
-            c->state = TCPAssignment::State::TIME_WAIT;
+            c->state = TCPAssignment::State::TIMED_WAIT;
             c->timer_ID=timeUUID;
         }
         //Get Ack in FIN_WAIT_1 state -> simply changes the state into FIN_WAIT_2
@@ -693,14 +696,14 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
     // 4. Receiving FIN means we are in 4-way handshaking(Finishing Connection)
     else if (flag == FLAG_FIN)
     {
-        printf("I got FIN");
+        //printf("I got FIN");
         int pid, fd;
 
         bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, &pid, &fd);
 
         if (!suc)
         {
-            printf("Can't find pid/fd pair. try again\n");
+            //printf("Can't find pid/fd pair. try again\n");
             freePacket(packet);
             return;
         }
@@ -757,10 +760,10 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
             this->sendPacket("IPv4", newPacket);
 
-            //Change the state into TIME_WAIT;
+            //Change the state into TIMED_WAIT;
             Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
             UUID timeUUID = TimerModule::addTimer((void* )newPacket, 2*msl);
-            c->state = TCPAssignment::State::TIME_WAIT;
+            c->state = TCPAssignment::State::TIMED_WAIT;
             c->timer_ID=timeUUID;
         }
     }
@@ -790,10 +793,10 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
             this->sendPacket("IPv4", newPacket);
 
-            //Change the state into TIME_WAIT;
-            //Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
-            UUID timeUUID = TimerModule::addTimer((void* )newPacket, 120000000000);
-            c->state = TCPAssignment::State::TIME_WAIT;
+            //Change the state into TIMED_WAIT;
+            Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
+            UUID timeUUID = TimerModule::addTimer((void* )newPacket, 2*msl);
+            c->state = TCPAssignment::State::TIMED_WAIT;
             c->timer_ID=timeUUID;
         }
     }
@@ -803,7 +806,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 
 void TCPAssignment::closeSocket(unsigned int pid, unsigned int fd)
 {
-    Context* context = TCPAssignment::contextList[pid][fd];
+/*    Context* context = TCPAssignment::contextList[pid][fd];
     if (context->backlog_size > 0)
     {
         free(context->backlog);
@@ -815,18 +818,18 @@ void TCPAssignment::closeSocket(unsigned int pid, unsigned int fd)
     for (auto blg : TCPAssignment::established_backlog_lists[pid][fd])
     {
         free(blg);
-    }
+    }*/
     TCPAssignment::contextList[pid].erase(fd);
     TCPAssignment::accept_waiting_lists[pid].erase(fd);
     TCPAssignment::established_backlog_lists[pid].erase(fd);
     SystemCallInterface::removeFileDescriptor(pid, fd);
-    free(context);
+//    free(context);
 }
 
 void TCPAssignment::timerCallback(void* payload)
 {
     //What should we do when alarm is triggered
-    //When state == TIME_WAIT -> Free fd, change context state into Closed
+    //When state == TIMED_WAIT -> Free fd, change context state into Closed
     //payload should be our packet itself
     //Extract fd and pid from our packet information
     Packet* packet = (Packet* )payload;
