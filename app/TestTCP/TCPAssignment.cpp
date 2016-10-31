@@ -722,7 +722,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         if (c->state == TCPAssignment::State::ESTABLISHED)
         {
             //Sends ACK
-            printf("Why do you close???");
             Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
             unsigned int* seq_number= &(c->seq_number);
             unsigned int ack_number;
@@ -731,6 +730,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
+            TCPAssignment::packet_fill_checksum(newPacket);
+
             this->sendPacket("IPv4", newPacket);
 
             //Change the state into CLOSE_WAIT;
@@ -740,7 +741,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         else if (c->state == TCPAssignment::State::FIN_WAIT_1)
         {
             //Sends ACK
-            printf("Simultaneous close");
+//            printf("Simultaneous close");
             Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
             unsigned int* seq_number= &(c->seq_number);
             unsigned int ack_number;
@@ -749,6 +750,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
+            TCPAssignment::packet_fill_checksum(newPacket);
             this->sendPacket("IPv4", newPacket);
 
             //Change the state into CLOSING
@@ -757,7 +759,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         //third handshake. Receiver sent all of its remaining packets. Change State into LAST_ACK
         else if (c->state == TCPAssignment::State::FIN_WAIT_2)
         {
-            printf("Last Ack. No turning back");
+//            printf("Last Ack. No turning back");
             //Sending ACK packet
             Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
             unsigned int* seq_number= &(c->seq_number);
@@ -768,6 +770,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
+            TCPAssignment::packet_fill_checksum(newPacket);
+
             Packet* copyPacket=this->clonePacket(packet);
             this->sendPacket("IPv4", newPacket);
 
@@ -803,6 +807,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
             newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
+            TCPAssignment::packet_fill_checksum(newPacket);
             Packet* copyPacket=this->clonePacket(packet);
             this->sendPacket("IPv4", newPacket);
 
