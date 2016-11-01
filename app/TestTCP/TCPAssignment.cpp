@@ -105,16 +105,28 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 int TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int domain, int type__unused)
 {
     int new_fd = SystemCallInterface::createFileDescriptor (pid);
-    Context* context = (Context*) malloc (sizeof (Context));
-    context->local_ip_address = 0;
-    context->local_port = 0;
-    context->isBound = false;
-    context->state = TCPAssignment::State::CLOSED;
-    context->seq_number = SEQ_NUMBER_START;
-    context->backlog_size = 0;
+    Context* context = TCPAssignment::create_new_context
+            (0, 0, 0, 0, SEQ_NUMBER_START, TCPAssignment::State::CLOSED, false, 0, 0, 0);
     TCPAssignment::contextList[pid][new_fd] = context;
-    //printf("Created socket - pid: %d, fd: %d\n", pid, new_fd);
     return new_fd;
+}
+
+TCPAssignment::Context* TCPAssignment::create_new_context
+(unsigned int local_ip_address, unsigned short local_port, unsigned int remote_ip_address, unsigned short remote_port,
+unsigned int seq_number, State state, bool isBound, UUID syscall_hold_ID, UUID timer_ID, int backlog_size)
+{
+    Context* new_context = (Context*) malloc (sizeof(Context));
+    new_context->local_ip_address = local_ip_address;
+    new_context->local_port = local_port;
+    new_context->remote_ip_address = remote_ip_address;
+    new_context->remote_port = remote_port;
+    new_context->seq_number = seq_number;
+    new_context->state = state;
+    new_context->isBound = isBound;
+    new_context->syscall_hold_ID = syscall_hold_ID;
+    new_context->timer_ID = timer_ID;
+    new_context->backlog_size = backlog_size;
+    return new_context;
 }
 
 int TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen)
@@ -206,7 +218,7 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
         closeSocket(pid, fd);
         return 0;
     }
-    Packet* finPacket = allocatePacket(SIZE_EMPTY_PACKET);
+
     unsigned int src_ip;
     unsigned int dest_ip;
     unsigned short src_port;
@@ -226,15 +238,8 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
     dest_ip = context->remote_ip_address;
     dest_port = context->remote_port;
 
-    char size = 5;
-    char syn = FLAG_FIN;
-    short window_size = htons(51200);
     unsigned int* seq_number = &(context->seq_number);
-    TCPAssignment::fill_packet_header(finPacket, src_ip, dest_ip, src_port, dest_port, size, syn, window_size, *seq_number);
-    TCPAssignment::packet_fill_checksum(finPacket);
-
-    this->sendPacket("IPv4", finPacket);
-
+    TCPAssignment::sendNewPacket(src_ip, src_port, dest_ip, dest_port, *seq_number, 0, 5, FLAG_FIN, htons(51200), 0);
     
     //updating contextList information
     context->syscall_hold_ID = syscallUUID;
@@ -251,7 +256,6 @@ int TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, const 
     /* Check for valid fd */
     if (TCPAssignment::contextList[pid][sockfd] == NULL) return -1;
 
-    Packet* synPacket = allocatePacket(SIZE_EMPTY_PACKET);
     unsigned int src_ip;
     unsigned int dest_ip;
     unsigned short src_port;
@@ -297,15 +301,8 @@ int TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, const 
 
     Context* context = TCPAssignment::contextList[pid][sockfd];
 
-    /* Setup header fields */
-    char size = 5;
-    char syn = FLAG_SYN;
-    short window_size = htons(51200);
     unsigned int* seq_number = &(context->seq_number);
-    /* Fill packet header and checksum */
-    TCPAssignment::fill_packet_header(synPacket, src_ip, dest_ip, src_port, dest_port, size, syn, window_size, *seq_number);
-    TCPAssignment::packet_fill_checksum(synPacket);
-    /* This seq_number belongs to this context - so we increment it by 1. */
+    TCPAssignment::sendNewPacket(src_ip, src_port, dest_ip, dest_port, *seq_number, 0, 5, FLAG_SYN, htons(51200), 0);
     *seq_number = htonl(ntohl(*seq_number) + 1);
 
     /* Store syscallUUID to return this system call after SYN/ACK arrives */
@@ -313,11 +310,10 @@ int TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, const 
     context->state = TCPAssignment::State::SYN_SENT;
     context->remote_ip_address = dest_ip;
     context->remote_port = dest_port;
-	
-    this->sendPacket("IPv4", synPacket);
 
     return 0;
 }
+
 int TCPAssignment::syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog)
 {
     /* Check for valid fd */
@@ -373,17 +369,10 @@ int TCPAssignment::return_syscall_accept
 (UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen, Context* c, Backlog* b)
 {
     int new_fd = this->createFileDescriptor(pid);
-    Context* new_context = (Context*) malloc (sizeof(Context));
-    new_context->local_ip_address = c->local_ip_address;
-    new_context->local_port = c->local_port;
-    new_context->remote_ip_address = b->remote_ip_address;
-    new_context->remote_port = b->remote_port;
-    new_context->seq_number = b->seq_number;
-    new_context->state = b->state;
-    new_context->isBound = true;
-    new_context->syscall_hold_ID = 0;
-    new_context->backlog_size = 0;
-    TCPAssignment::contextList[pid][new_fd] = new_context;
+    Context* context = TCPAssignment::create_new_context
+            (c->local_ip_address, c->local_port, b->remote_ip_address, b->remote_port, b->seq_number,
+            b->state, true, 0, 0, 0);
+    TCPAssignment::contextList[pid][new_fd] = context;
 
     int ret = TCPAssignment::syscall_getpeername(syscallUUID, pid, new_fd, addr, addrlen);
     if (ret < -1) // shouldn't happen
@@ -511,9 +500,9 @@ void TCPAssignment::packet_fill_checksum(Packet* packet)
     packet->writeData(PACKETLOC_CHKSUM, &checksum, 2);
 }
 
-void TCPAssignment::fill_packet_header(Packet* packet, unsigned int src_ip, unsigned int dest_ip,
-        unsigned short src_port, unsigned short dest_port, char size, char syn, short window_size,
-        unsigned int seq_number)
+void TCPAssignment::fill_packet_header(Packet* packet, unsigned int src_ip, unsigned short src_port,
+        unsigned int dest_ip, unsigned short dest_port, char size, char syn, short window_size,
+        unsigned int seq_number, unsigned int ack_number)
 {
     packet->writeData(PACKETLOC_SRC_IP, &src_ip, 4);
     packet->writeData(PACKETLOC_DEST_IP, &dest_ip, 4);
@@ -529,8 +518,8 @@ void TCPAssignment::fill_packet_header(Packet* packet, unsigned int src_ip, unsi
     packet->writeData(PACKETLOC_WINDOWSIZE, &window_size, 2);
     /* Mark seq number */
     packet->writeData(PACKETLOC_SEQNO, &seq_number, 4);
+    packet->writeData(PACKETLOC_ACKNO, &ack_number, 4);
 }
-
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 {
@@ -562,19 +551,14 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         if (c->state == TCPAssignment::State::SYN_SENT)
         {
             // Send ACK in response.
-            Packet* newPacket = this->allocatePacket(54);
             unsigned int* seq_number = &(c->seq_number);
-            TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port,
-                5, FLAG_ACK, htons(51200), *seq_number);
-            //*seq_number = htonl(ntohl(*seq_number) + 1);
-            /* Ack number is manually written on header */
             unsigned int ack_number;
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number = htonl(ntohl(ack_number) + 1);
-            newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
-            /* Make sure to fill checksum AFTER ack number is filled in. */
-            TCPAssignment::packet_fill_checksum(newPacket);
-            this->sendPacket("IPv4", newPacket);
+
+            TCPAssignment::sendNewPacket(dest_ip, dest_port, src_ip, src_port, 
+                *seq_number, ack_number, 5, FLAG_ACK, htons(51200), 0);
+
             c->state = TCPAssignment::State::ESTABLISHED;
             this->returnSystemCall(c->syscall_hold_ID, 0);
         }
@@ -609,22 +593,19 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                 backlog->in_use = true;
 
                 // Send SYNACK in response.
-                Packet* newPacket = this->allocatePacket(54);
                 unsigned int seq_number = backlog->seq_number = SEQ_NUMBER_START;
-                TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port,
-                    5, FLAG_SYNACK, htons(51200), seq_number);
                 backlog->seq_number = htonl(ntohl(seq_number) + 1);
                 /* Ack number is manually written on header */
                 unsigned int ack_number;
                 packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
                 ack_number = htonl(ntohl(ack_number) + 1);
-                newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
-                /* Make sure to fill checksum AFTER ack number is filled in. */
-                TCPAssignment::packet_fill_checksum(newPacket);
-                this->sendPacket("IPv4", newPacket);
+
+                TCPAssignment::sendNewPacket(dest_ip, dest_port, src_ip, src_port, seq_number, ack_number,
+                    5, FLAG_SYNACK, htons(51200), 0);
             }
         }
     }
+    
 
     // 3. From the server, when we receive ACK while we are SYN_RCVD state, we are connected.
     // In 4-way handshaking, receiving ACK while in FIN_WAIT or CLOSING, we are closing connection
@@ -694,12 +675,12 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
             unsigned int* seq_number= &(c->seq_number);
             unsigned int ack_number;
-            TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
-                FLAG_ACK, htons(51200), *seq_number);
+            
             //*seq_number = htonl(ntohl(*seq_number)+1);
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
-            newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
+            TCPAssignment::fill_packet_header(newPacket, dest_ip, dest_port, src_ip, src_port, 5,
+                FLAG_ACK, htons(51200), *seq_number, ack_number);
 
             //Sends ACK
             //State becomes TIMED_WAIT;
@@ -738,88 +719,61 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             }
             else
             {
-                Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
                 unsigned int* seq_number= &(bggg->seq_number);
                 unsigned int ack_number;
-                TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
-                    FLAG_ACK, htons(51200), *seq_number);
+                
                 packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
                 ack_number=htonl(ntohl(ack_number)+1);
-                newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
-                TCPAssignment::packet_fill_checksum(newPacket);
-                this->sendPacket("IPv4", newPacket);
+
+                TCPAssignment::sendNewPacket(dest_ip, dest_port, src_ip, src_port, *seq_number, ack_number,
+                    5, FLAG_ACK, htons(51200), 0);
 
                 //Change the state into CLOSE_WAIT;
                 bggg->state = TCPAssignment::State::CLOSE_WAIT;
             }
+
             freePacket(packet);
             return;
         }
         Context* c = TCPAssignment::contextList[pid][fd];
 
         //Passive Closing. Send ACK, and wait for change State into CLOSE_WAIT
-        if (c->state == TCPAssignment::State::ESTABLISHED)
+        if (c->state == TCPAssignment::State::ESTABLISHED ||
+            c->state == TCPAssignment::State::FIN_WAIT_1 ||
+            c->state == TCPAssignment::State::FIN_WAIT_2)
         {
             //Sends ACK
-            Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
             unsigned int* seq_number= &(c->seq_number);
             unsigned int ack_number;
-            TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
-                FLAG_ACK, htons(51200), *seq_number);
+            
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
-            newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
-            TCPAssignment::packet_fill_checksum(newPacket);
-            this->sendPacket("IPv4", newPacket);
+
+            TCPAssignment::sendNewPacket(dest_ip, dest_port, src_ip, src_port, *seq_number, ack_number,
+                5, FLAG_ACK, htons(51200), 0);
 
             //Change the state into CLOSE_WAIT;
-			c->state = TCPAssignment::State::CLOSE_WAIT;
+			if (c->state == TCPAssignment::State::ESTABLISHED)
+            {
+                c->state = TCPAssignment::State::CLOSE_WAIT;
+            }
+            else if (c->state == TCPAssignment::State::FIN_WAIT_1)//Simultaneous Closing. Send ACK, and change State into CLOSING 
+            {
+                c->state = TCPAssignment::State::CLOSING;
+            }
+            else //if (c->state == TCPAssignment::State::FIN_WAIT_2)
+            {
+                Packet* copyPacket = this->clonePacket(packet);
+
+                Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
+                UUID timeUUID = TimerModule::addTimer((void* )copyPacket, 2*msl);
+
+                c->state = TCPAssignment::State::TIMED_WAIT;
+                c->timer_ID=timeUUID;
+            }
         }
-        //Simultaneous Closing. Send ACK, and change State into CLOSING 
-        else if (c->state == TCPAssignment::State::FIN_WAIT_1)
-        {
-            //Sends ACK
-//            printf("Simultaneous close");
-            Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
-            unsigned int* seq_number= &(c->seq_number);
-            unsigned int ack_number;
-            TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
-                FLAG_ACK, htons(51200), *seq_number);
-            packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
-            ack_number=htonl(ntohl(ack_number)+1);
-            newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
-            TCPAssignment::packet_fill_checksum(newPacket);
-            this->sendPacket("IPv4", newPacket);
-
-            //Change the state into CLOSING
-            c->state = TCPAssignment::State::CLOSING;
-        }
-        //third handshake. Receiver sent all of its remaining packets. Change State into LAST_ACK
-        else if (c->state == TCPAssignment::State::FIN_WAIT_2)
-        {
-//            printf("Last Ack. No turning back");
-            //Sending ACK packet
-            Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
-            unsigned int* seq_number= &(c->seq_number);
-            unsigned int ack_number;
-            TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
-                FLAG_ACK, htons(51200), *seq_number);
-//            *seq_number = htonl(ntohl(*seq_number)+1);
-            packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
-            ack_number=htonl(ntohl(ack_number)+1);
-            newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
-            TCPAssignment::packet_fill_checksum(newPacket);
-
-            Packet* copyPacket=this->clonePacket(packet);
-            this->sendPacket("IPv4", newPacket);
-
-            //Change the state into TIMED_WAIT;
-            Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
-            UUID timeUUID = TimerModule::addTimer((void* )copyPacket, 2*msl);
-
-            c->state = TCPAssignment::State::TIMED_WAIT;
-            c->timer_ID=timeUUID;
-        }
+        
+        
     }
     // 5. As an active closing host, we can possibly get signal FIN/ACK
     else if (flag == FLAG_FINACK)
@@ -836,18 +790,17 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         if (c->state == TCPAssignment::State::FIN_WAIT_1)
         {
             //Sending ACK packet
-            Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
             unsigned int* seq_number= &(c->seq_number);
             unsigned int ack_number;
-            TCPAssignment::fill_packet_header(newPacket, dest_ip, src_ip, dest_port, src_port, 5,
-                FLAG_ACK, htons(51200), *seq_number);
+            
   //          *seq_number = htonl(ntohl(*seq_number)+1);
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
-            newPacket->writeData(PACKETLOC_ACKNO, &ack_number, 4);
-            TCPAssignment::packet_fill_checksum(newPacket);
+
+            TCPAssignment::sendNewPacket(dest_ip, dest_port, src_ip, src_port, *seq_number, ack_number,
+                5, FLAG_ACK, htons(51200), 0);
+
             Packet* copyPacket=this->clonePacket(packet);
-            this->sendPacket("IPv4", newPacket);
 
             //Change the state into TIMED_WAIT;
             Time msl = TimeUtil::makeTime(MSL, TimeUtil::TimeUnit::SEC);
@@ -910,5 +863,15 @@ void TCPAssignment::timerCallback(void* payload)
     return;
 }
 
+void TCPAssignment::sendNewPacket(unsigned int src_ip, unsigned short src_port, unsigned int dest_ip, unsigned short dest_port,
+    unsigned int seq_number, unsigned int ack_number, int header_offset, char flag, short window_size,
+    unsigned int payload_size)
+{
+    Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET + payload_size);
+    TCPAssignment::fill_packet_header(newPacket, src_ip, src_port, dest_ip, dest_port, header_offset, 
+        flag, window_size, seq_number, ack_number);
+    TCPAssignment::packet_fill_checksum(newPacket);
+    this->sendPacket("IPv4", newPacket);
+}
 
 }
