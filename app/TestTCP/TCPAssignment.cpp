@@ -438,7 +438,8 @@ bool TCPAssignment::retrieve_fd_from_context(unsigned int local_ip_address, unsi
         {
             Context* c = it2.second;
             if ((c->local_ip_address == local_ip_address || c->local_ip_address == htonl(INADDR_ANY)) &&
-                (c->local_port == local_port))
+                (c->local_port == local_port) &&
+                (c->state == TCPAssignment::State::LISTEN))
             {
                 *pid = it.first;
                 *fd = it2.first;
@@ -612,65 +613,75 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
     else if (flag == FLAG_ACK)
     {
         int pid, fd;
+        Context* c;
         
-        bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, &pid, &fd);
+        bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, src_ip, src_port, &pid, &fd);
 
         if (!suc)
         {
-            freePacket(packet);
-            return;
-        }
-        Context* c = TCPAssignment::contextList[pid][fd];
-        if (c->state == TCPAssignment::State::LISTEN)
-        {
-            // Find the matching backlog space
-            int i;
-            for (i=0; i<c->backlog_size; i++)
+            bool suc2 = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, &pid, &fd);
+            if (!suc2)
             {
-                if (c->backlog[i].in_use && c->backlog[i].remote_ip_address == src_ip &&
-                    c->backlog[i].remote_port == src_port)
-                {
-                    break;
-                }
+                freePacket(packet);
+                return;
             }
-            if (i != c->backlog_size)
+            c = TCPAssignment::contextList[pid][fd];
+            if (c->state == TCPAssignment::State::LISTEN)
             {
-                // Matching backlog is found. Check its state.
-                Backlog* backlog = &(c->backlog[i]);
-                if (backlog->state == TCPAssignment::State::SYN_RCVD)
+                // Find the matching backlog space
+                int i;
+                for (i=0; i<c->backlog_size; i++)
                 {
-                    /* Move this backlog to established backlog. */
-                    Backlog* estab_bg = (Backlog*) malloc (sizeof(Backlog));
-                    estab_bg->remote_ip_address = backlog->remote_ip_address;
-                    estab_bg->remote_port = backlog->remote_port;
-                    estab_bg->seq_number = backlog->seq_number;
-                    estab_bg->state = TCPAssignment::State::ESTABLISHED;
-                    TCPAssignment::established_backlog_lists[pid][fd].push_back(estab_bg);
-                    backlog->in_use = false;
-                    /* If there's any waiting accepts, return this. */
-                    if (!TCPAssignment::accept_waiting_lists[pid][fd].empty())
+                    if (c->backlog[i].in_use && c->backlog[i].remote_ip_address == src_ip &&
+                        c->backlog[i].remote_port == src_port)
                     {
-                        AcceptWaiting* aw = TCPAssignment::accept_waiting_lists[pid][fd].front();
-                        UUID syscallUUID = aw->syscallUUID;
-                        int waiting_pid = aw->pid;
-                        int waiting_fd = aw->sockfd;
-                        struct sockaddr *addr = aw->addr;
-                        socklen_t *addrlen = aw->addrlen;
-                        int new_fd = TCPAssignment::return_syscall_accept(syscallUUID, waiting_pid, waiting_fd, addr, addrlen, c, estab_bg);
-                        if (new_fd != -2)
+                        break;
+                    }
+                }
+                if (i != c->backlog_size)
+                {
+                    // Matching backlog is found. Check its state.
+                    Backlog* backlog = &(c->backlog[i]);
+                    if (backlog->state == TCPAssignment::State::SYN_RCVD)
+                    {
+                        /* Move this backlog to established backlog. */
+                        Backlog* estab_bg = (Backlog*) malloc (sizeof(Backlog));
+                        estab_bg->remote_ip_address = backlog->remote_ip_address;
+                        estab_bg->remote_port = backlog->remote_port;
+                        estab_bg->seq_number = backlog->seq_number;
+                        estab_bg->state = TCPAssignment::State::ESTABLISHED;
+                        TCPAssignment::established_backlog_lists[pid][fd].push_back(estab_bg);
+                        backlog->in_use = false;
+                        /* If there's any waiting accepts, return this. */
+                        if (!TCPAssignment::accept_waiting_lists[pid][fd].empty())
                         {
-                            this->returnSystemCall(syscallUUID, new_fd);
-                            TCPAssignment::established_backlog_lists[pid][fd].pop_front();
-                            TCPAssignment::accept_waiting_lists[pid][fd].pop_front();
+                            AcceptWaiting* aw = TCPAssignment::accept_waiting_lists[pid][fd].front();
+                            UUID syscallUUID = aw->syscallUUID;
+                            int waiting_pid = aw->pid;
+                            int waiting_fd = aw->sockfd;
+                            struct sockaddr *addr = aw->addr;
+                            socklen_t *addrlen = aw->addrlen;
+                            int new_fd = TCPAssignment::return_syscall_accept(syscallUUID, waiting_pid, waiting_fd, addr, addrlen, c, estab_bg);
+                            if (new_fd != -2)
+                            {
+                                this->returnSystemCall(syscallUUID, new_fd);
+                                TCPAssignment::established_backlog_lists[pid][fd].pop_front();
+                                TCPAssignment::accept_waiting_lists[pid][fd].pop_front();
+                            }
+                            free(aw);
                         }
-                        free(aw);
                     }
                 }
             }
+
+            freePacket(packet);
+            return;
         }
+
+        c = TCPAssignment::contextList[pid][fd];
         /*Get Ack in CLOSING State -> 4-way handshaking is done in starting host. We send ACK, and wait
         for 2*MSL*/
-        else if (c->state == TCPAssignment::State::CLOSING)
+        if (c->state == TCPAssignment::State::CLOSING)
         {
             Packet* newPacket = this->allocatePacket(SIZE_EMPTY_PACKET);
             unsigned int* seq_number= &(c->seq_number);
