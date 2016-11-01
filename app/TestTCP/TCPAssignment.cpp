@@ -779,7 +779,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
     else if (flag == FLAG_FINACK)
     {
         int pid, fd;
-        bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, &pid, &fd);
+        bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, src_ip, src_port, &pid, &fd);
         if (!suc)
         {
             freePacket(packet);
