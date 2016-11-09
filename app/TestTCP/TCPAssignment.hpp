@@ -124,10 +124,17 @@ public:
     bool retrieve_backlog_when_FIN (unsigned int remote_ip_address, unsigned short remote_port, Backlog** bg);
 
     void packet_fill_checksum(Packet* packet);
-    void fill_packet_header(Packet* packet, unsigned int src_ip, unsigned int dest_ip,
-        unsigned short src_port, unsigned short dest_port, char size, char syn, short window_size,
-        unsigned int seq_number);
+    void fill_packet_header(Packet* packet, unsigned int src_ip, unsigned short src_port,
+        unsigned int dest_ip, unsigned short dest_port, char size, char syn, short window_size,
+        unsigned int seq_number, unsigned int ack_number);
     void closeSocket(unsigned int pid, unsigned int fd);
+
+    Context* create_new_context(unsigned int local_ip_address, unsigned short local_port, unsigned int remote_ip_address, 
+        unsigned short remote_port, unsigned int seq_number, State state, bool isBound, 
+        UUID syscall_hold_ID, UUID timer_ID, int backlog_size);
+    void sendNewPacket(unsigned int src_ip, unsigned short src_port, unsigned int dest_ip, unsigned short dest_port,
+    unsigned int seq_number, unsigned int ack_number, int header_offset, char flag, short window_size,
+    unsigned int payload_size);
 
 protected:
     virtual void systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param) final;
