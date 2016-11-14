@@ -497,13 +497,17 @@ int TCPAssignment::syscall_read(UUID syscallUUID, int pid, int fd, void *buf, si
 
     Buffer* recv_buffer = c->recv_buffer;
 
-    int buf_read = recv_buffer->read_buf((char*) buf, count);
-    assert(buf_read <= count);
-
-    if (buf_read == 0) {
+    if (c->state == TCPAssignment::State::CLOSE_WAIT) {
+        return -1;
+    }
+    if (recv_buffer->size == 0) {
         c->btsyscall->set_fields(TRANSFER_READ, syscallUUID, (char*) buf, count);
         return -2;
     }
+    
+
+    int buf_read = recv_buffer->read_buf((char*) buf, count);
+    assert(buf_read <= count);
 
     return buf_read;
 }
@@ -565,6 +569,16 @@ int TCPAssignment::find_length_of_unacked_packets(int pid, int fd)
     for (auto it : TCPAssignment::send_window_lists[pid][fd])
     {
         sum_length += it->packet->getSize() - SIZE_EMPTY_PACKET;
+    }
+    return sum_length;
+}
+
+int TCPAssignment::find_length_of_out_of_order_packets(int pid, int fd)
+{
+    int sum_length = 0;
+    for (auto it : TCPAssignment::recv_packet_lists[pid][fd])
+    {
+        sum_length += it->getSize() - SIZE_EMPTY_PACKET;
     }
     return sum_length;
 }
@@ -877,8 +891,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         {
             TCPAssignment::closeSocket(pid, fd);
         }
-        //Data transfer
-        else if (c->state == TCPAssignment::State::ESTABLISHED)
+        //Data transfer (send)
+        else if (c->state == TCPAssignment::State::ESTABLISHED && packet->getSize() - SIZE_EMPTY_PACKET == 0)
         {
             unsigned int ack_number;
             packet->readData(PACKETLOC_ACKNO, &ack_number, 4);
@@ -905,6 +919,38 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                 int written_bytes = TCPAssignment::syscall_write(bts->syscall_hold_ID, pid, fd, bts->buf, bts->count);
                 this->returnSystemCall(bts->syscall_hold_ID, written_bytes);
                 bts->is_blocked = false;
+            }
+        }
+        //Data transfer (receive)
+        else if (c->state == TCPAssignment::State::ESTABLISHED && packet->getSize() - SIZE_EMPTY_PACKET > 0)
+        {
+            unsigned int seq_number;
+            packet->readData(PACKETLOC_SEQNO, &seq_number, 4);
+            if (seq_number == c->ack_number) {
+                Buffer* recv_buffer = c->recv_buffer;
+
+                int payload_size = packet->getSize() - SIZE_EMPTY_PACKET;
+                char* data = (char*) malloc (payload_size);
+                packet->readData(PACKETLOC_PAYLOAD, data, payload_size);
+                recv_buffer->write_buf(data, payload_size);
+
+                if (c->btsyscall->is_blocked && c->btsyscall->transfer_type == TRANSFER_READ)
+                {
+                    BlockedTransferSyscall* bts = c->btsyscall;
+                    int read_bytes = TCPAssignment::syscall_read(bts->syscall_hold_ID, pid, fd, bts->buf, bts->count);
+                    this->returnSystemCall(bts->syscall_hold_ID, read_bytes);
+                    bts->is_blocked = false;
+                }
+
+                c->ack_number = htonl(ntohl(c->ack_number) + payload_size);
+                int remaining_window = BUFFER_SIZE - find_length_of_out_of_order_packets(pid, fd) - recv_buffer->size;
+                TCPAssignment::sendNewPacket(dest_ip, dest_port, src_ip, src_port, c->seq_number, c->ack_number,
+                    5, FLAG_ACK, htons(remaining_window), 0, NULL, false);
+
+                
+            }
+            else {
+                //TODO: Out of order packet arrival
             }
         }
     }
@@ -964,6 +1010,10 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 			if (c->state == TCPAssignment::State::ESTABLISHED)
             {
                 c->state = TCPAssignment::State::CLOSE_WAIT;
+                if (c->btsyscall->is_blocked && c->btsyscall->transfer_type == TRANSFER_READ)
+                {
+                    this->returnSystemCall(c->btsyscall->syscall_hold_ID, -1);
+                }
             }
             else if (c->state == TCPAssignment::State::FIN_WAIT_1)//Simultaneous Closing. Send ACK, and change State into CLOSING 
             {

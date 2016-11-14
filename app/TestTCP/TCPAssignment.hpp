@@ -171,6 +171,7 @@ public:
 
     void create_data_packets_and_send(int pid, int fd);
     int find_length_of_unacked_packets(int pid, int fd);
+    int find_length_of_out_of_order_packets(int pid, int fd);
 
     bool retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port,
         unsigned int remote_ip_address, unsigned short remote_port, int* pid, int* fd);
