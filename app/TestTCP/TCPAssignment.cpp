@@ -497,10 +497,11 @@ int TCPAssignment::syscall_read(UUID syscallUUID, int pid, int fd, void *buf, si
 
     Buffer* recv_buffer = c->recv_buffer;
 
-    if (c->state == TCPAssignment::State::CLOSE_WAIT) {
-        return -1;
-    }
+
     if (recv_buffer->size == 0) {
+        if (c->state == TCPAssignment::State::CLOSE_WAIT) {
+            return -1;
+        }
         c->btsyscall->set_fields(TRANSFER_READ, syscallUUID, (char*) buf, count);
         return -2;
     }
