@@ -52,7 +52,9 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
         break;
     case CLOSE:
         ret = this->syscall_close(syscallUUID, pid, param.param1_int);
-        this->returnSystemCall(syscallUUID, ret);
+        if (ret != -2) {
+            this->returnSystemCall(syscallUUID, ret);
+        }
         break;
     case READ:
         ret = this->syscall_read(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
@@ -139,6 +141,12 @@ int backlog_size)
     new_context->recv_buffer = new Buffer();
     new_context->btsyscall = new BlockedTransferSyscall();
     new_context->rwnd = BUFFER_SIZE;
+
+    new_context->cwnd = MAX_DATA_FIELD_SIZE;
+    new_context->dup_ack_count = 0;
+    new_context->ssthresh = 64000;
+    new_context->congestion_state = CONG_SLOW_START;
+    new_context->last_ack_number = 0;
     return new_context;
 }
 
@@ -250,6 +258,12 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
     src_port = context->local_port;
     dest_ip = context->remote_ip_address;
     dest_port = context->remote_port;
+
+    if (context->send_buffer->size + find_length_of_unacked_packets(pid, fd) > 0)
+    {
+        context->btsyscall->set_fields(TRANSFER_CLOSE, syscallUUID, NULL, 0);
+        return -2;
+    }
 
     unsigned int* seq_number = &(context->seq_number);
     TCPAssignment::sendNewPacket(src_ip, src_port, dest_ip, dest_port, *seq_number, 
@@ -471,6 +485,31 @@ void TCPAssignment::BlockedTransferSyscall::set_fields(int ttype, UUID sID, char
     this->count = count;
 }
 
+void TCPAssignment::release_blocked_write(int pid, int fd)
+{
+    Context* c = TCPAssignment::contextList[pid][fd];
+    if (c->btsyscall->is_blocked && c->btsyscall->transfer_type == TRANSFER_WRITE) {
+        BlockedTransferSyscall* bts = c->btsyscall;
+        int written_bytes = TCPAssignment::syscall_write(bts->syscall_hold_ID, pid, fd, bts->buf, bts->count);
+        this->returnSystemCall(bts->syscall_hold_ID, written_bytes);
+        bts->is_blocked = false;
+    }
+}
+
+void TCPAssignment::retransmit_first_unacked_packet(int pid, int fd)
+{    
+    int count = 0;
+    for (auto it : TCPAssignment::send_window_lists[pid][fd])
+    {
+        Packet* cloned = this->clonePacket(it->packet);
+        unsigned int seq_number;
+        cloned->readData(PACKETLOC_SEQNO, &seq_number, 4);
+        this->sendPacket("IPv4", cloned);
+        count++;
+        if (count > 15) break;
+    }
+}
+
 int TCPAssignment::syscall_write(UUID syscallUUID, int pid, int fd, const void *buf, size_t count)
 {
     Context* c = TCPAssignment::contextList[pid][fd];
@@ -520,7 +559,7 @@ void TCPAssignment::create_data_packets_and_send(int pid, int fd)
 
     Buffer* send_buffer = c->send_buffer;
     int unacked_data_length = find_length_of_unacked_packets(pid, fd);
-    int window_size_limit = c->rwnd; //TODO: Need to integrate cwnd from congestion control into here.
+    int window_size_limit = (c->rwnd < c->cwnd)? c->rwnd : c->cwnd;
     int remaining_window = window_size_limit - unacked_data_length;
 
     unsigned int src_ip = c->local_ip_address;
@@ -537,11 +576,9 @@ void TCPAssignment::create_data_packets_and_send(int pid, int fd)
         }
     }
 
-    while (remaining_window > 0 && send_buffer->size > 0)
+    while (remaining_window > 511 && send_buffer->size > 511)
     {
         int new_packet_data_length = MAX_DATA_FIELD_SIZE;
-        if (remaining_window < new_packet_data_length) new_packet_data_length = remaining_window;
-        if (send_buffer->size < new_packet_data_length) new_packet_data_length = send_buffer->size;
 
         char* payload = (char*) malloc (new_packet_data_length);
         send_buffer->read_buf(payload, new_packet_data_length);
@@ -549,6 +586,15 @@ void TCPAssignment::create_data_packets_and_send(int pid, int fd)
         Packet* newPacket = TCPAssignment::sendNewPacket(src_ip, src_port, dest_ip, dest_port,
             c->seq_number, c->ack_number, 5, FLAG_ACK, htons(c->rwnd), new_packet_data_length, payload, true);
         free(payload);
+
+        if (c->timer_on == false)
+        {
+            Packet* copyPacket = this->clonePacket(newPacket);
+            Time msl = TimeUtil::makeTime(200, TimeUtil::TimeUnit::MSEC);
+            UUID timeUUID = TimerModule::addTimer((void* )copyPacket, msl);
+            c->timer_on = true;
+            c->timer_ID=timeUUID;
+        }
 
         Window* window = (Window*) malloc (sizeof(Window));
         window->currentTime = this->getHost()->getSystem()->getCurrentTime();
@@ -892,7 +938,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         {
             TCPAssignment::closeSocket(pid, fd);
         }
-        //Data transfer (send)
+        //Data transfer (send) - ACK received
         else if (c->state == TCPAssignment::State::ESTABLISHED && packet->getSize() - SIZE_EMPTY_PACKET == 0)
         {
             unsigned int ack_number;
@@ -914,12 +960,88 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                     break;
                 }
             }
-            create_data_packets_and_send(pid, fd);
-            if (c->btsyscall->is_blocked && c->btsyscall->transfer_type == TRANSFER_WRITE) {
-                BlockedTransferSyscall* bts = c->btsyscall;
-                int written_bytes = TCPAssignment::syscall_write(bts->syscall_hold_ID, pid, fd, bts->buf, bts->count);
-                this->returnSystemCall(bts->syscall_hold_ID, written_bytes);
-                bts->is_blocked = false;
+
+            short window_size;
+            packet->readData(PACKETLOC_WINDOWSIZE, &window_size, 2);
+            c->rwnd = ntohs(window_size);
+            assert(ntohs(ack_number) >= ntohs(c->last_ack_number));
+            // duplicate ack
+            if (c->last_ack_number == ack_number)
+            {
+                if (c->congestion_state == CONG_RECOVERY)
+                {
+                    c->cwnd += MAX_DATA_FIELD_SIZE;
+                    create_data_packets_and_send(pid, fd);
+                }
+                else
+                {
+                    c->dup_ack_count++;
+                    if (c->dup_ack_count == 3)
+                    {
+                        c->ssthresh = c->cwnd / 2;
+                        c->cwnd = c->ssthresh + 3;
+                        c->congestion_state = CONG_RECOVERY;
+                        retransmit_first_unacked_packet(pid, fd);
+                    }
+                }
+            }
+            // normal ack
+            else
+            {
+                c->last_ack_number = ack_number;
+                c->dup_ack_count = 0;
+                if (c->congestion_state == CONG_SLOW_START)
+                {
+                    c->cwnd += MAX_DATA_FIELD_SIZE;
+                    create_data_packets_and_send(pid, fd);
+                    
+                }
+                else if (c->congestion_state == CONG_AVOIDANCE)
+                {
+                    c->cwnd += MAX_DATA_FIELD_SIZE * MAX_DATA_FIELD_SIZE / c->cwnd;
+                    create_data_packets_and_send(pid, fd);
+                    //retransmit_first_unacked_packet(pid, fd);
+                }
+                else // c->congestion_state == CONG_RECOVERY
+                {
+                    c->cwnd = c->ssthresh;
+                    c->congestion_state = CONG_AVOIDANCE;
+                    //create_data_packets_and_send(pid, fd);
+                    //retransmit_first_unacked_packet(pid, fd);
+                }
+
+                if (find_length_of_unacked_packets(pid, fd) > 0)
+                {
+                    TimerModule::cancelTimer(c->timer_ID);
+                    Packet* copyPacket = this->clonePacket(TCPAssignment::send_window_lists[pid][fd].front()->packet);
+                    Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
+                    UUID timeUUID = TimerModule::addTimer((void* )copyPacket, msl);
+                    c->timer_on = true;
+                    c->timer_ID=timeUUID;
+                }
+                else
+                {
+                    TimerModule::cancelTimer(c->timer_ID);
+                    c->timer_on = false;
+                }
+
+                if (c->send_buffer->size + find_length_of_unacked_packets(pid, fd) == 0 &&
+                    c->btsyscall->is_blocked && c->btsyscall->transfer_type == TRANSFER_CLOSE)
+                {
+                    int ret = TCPAssignment::syscall_close(c->btsyscall->syscall_hold_ID, pid, fd);
+                    returnSystemCall(c->btsyscall->syscall_hold_ID, ret);
+                }
+                
+            }
+
+            if (BUFFER_SIZE - c->send_buffer->size - find_length_of_unacked_packets(pid, fd) > 0)
+            {
+                release_blocked_write(pid, fd);
+            }
+
+            if (c->congestion_state == CONG_SLOW_START && c->cwnd > c->ssthresh)
+            {
+                c->congestion_state = CONG_AVOIDANCE;
             }
         }
         //Data transfer (receive)
@@ -1113,15 +1235,37 @@ void TCPAssignment::timerCallback(void* payload)
     packet->readData(PACKETLOC_SRC_PORT, &src_port, 2);
     packet->readData(PACKETLOC_DEST_PORT, &dest_port, 2);
     int pid, fd;
-    bool suc = TCPAssignment::retrieve_fd_from_context(dest_ip, dest_port, &pid, &fd);
+    bool suc = TCPAssignment::retrieve_fd_from_context(src_ip, src_port, dest_ip, dest_port, &pid, &fd);
     if (!suc)
     {
         freePacket(packet);
         return;
     }
-    //After extracting informations, removing fd/pid pair from contextList/backlog/established
-    TCPAssignment::closeSocket(pid, fd);
-    freePacket(packet);
+    Context* c = TCPAssignment::contextList[pid][fd];
+    if (c->timer_on && c->state == TCPAssignment::State::ESTABLISHED)
+    {        
+        Packet* copyPacket = this->clonePacket(packet);
+        this->sendPacket("IPv4", packet);
+        Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
+        UUID timeUUID = TimerModule::addTimer((void* )copyPacket, msl);
+        c->timer_on = true;
+        c->timer_ID=timeUUID;
+        
+        c->ssthresh = c->cwnd / 2;
+        c->cwnd = MAX_DATA_FIELD_SIZE;
+        c->dup_ack_count = 0;
+        c->congestion_state = CONG_SLOW_START;
+        if (c->congestion_state == CONG_SLOW_START && c->cwnd > c->ssthresh)
+        {
+            c->congestion_state = CONG_AVOIDANCE;
+        }
+    }
+    else
+    {
+        //After extracting informations, removing fd/pid pair from contextList/backlog/established
+        TCPAssignment::closeSocket(pid, fd);
+        freePacket(packet);
+    }
     return;
 }
 

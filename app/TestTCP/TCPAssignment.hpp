@@ -48,8 +48,14 @@
 
 #define TRANSFER_WRITE 1
 #define TRANSFER_READ 0
+#define TRANSFER_CLOSE 2
+
+#define CONG_SLOW_START 0
+#define CONG_AVOIDANCE 1
+#define CONG_RECOVERY 2
 
 #define MSL 60
+#define RTO 200
 
 namespace E
 {
@@ -141,6 +147,12 @@ public:
         Buffer* send_buffer;
         Buffer* recv_buffer;
         int rwnd;
+        int cwnd;
+        int dup_ack_count;
+        int ssthresh;
+        int congestion_state;
+        unsigned int last_ack_number;
+        bool timer_on;
     };
 
     class Window
@@ -168,6 +180,9 @@ public:
 
     int syscall_write(UUID syscallUUID, int pid, int fd, const void *buf, size_t count);
     int syscall_read(UUID syscallUUID, int pid, int fd, void *buf, size_t count);
+
+    void release_blocked_write(int pid, int fd);
+    void retransmit_first_unacked_packet(int pid, int fd);
 
     void create_data_packets_and_send(int pid, int fd);
     int find_length_of_unacked_packets(int pid, int fd);
