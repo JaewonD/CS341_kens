@@ -136,7 +136,7 @@ int backlog_size)
     new_context->syscall_hold_ID = syscall_hold_ID;
     new_context->timer_ID = timer_ID;
     new_context->backlog_size = backlog_size;
-
+    new_context->isClosing = false;
     new_context->send_buffer = new Buffer();
     new_context->recv_buffer = new Buffer();
     new_context->btsyscall = new BlockedTransferSyscall();
@@ -274,6 +274,7 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
     Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
     UUID timeUUID = TimerModule::addTimer((void*)copyPacket, msl);
     context->timer_ID = timeUUID;
+    context->isClosing = true;
     this->sendPacket("IPv4", FinPacket);
     //printf("FIN packet reaaaaally ssent. (port: %d)\n", ntohs(context->remote_port));
     //updating contextList information
@@ -1134,7 +1135,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         //Passive Closing. Send ACK, and wait for change State into CLOSE_WAIT
         if (c->state == TCPAssignment::State::ESTABLISHED ||
             c->state == TCPAssignment::State::FIN_WAIT_1 ||
-            c->state == TCPAssignment::State::FIN_WAIT_2)
+            c->state == TCPAssignment::State::FIN_WAIT_2 ||
+            c->state == TCPAssignment::State::CLOSE_WAIT)
         {
             //Sends ACK
             unsigned int* seq_number= &(c->seq_number);
@@ -1160,7 +1162,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             {
                 c->state = TCPAssignment::State::CLOSING;
             }
-            else //if (c->state == TCPAssignment::State::FIN_WAIT_2)
+            else if (c->state == TCPAssignment::State::FIN_WAIT_2)
             {
                 Packet* copyPacket = this->clonePacket(packet);
 
@@ -1169,6 +1171,10 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 
                 c->state = TCPAssignment::State::TIMED_WAIT;
                 c->timer_ID=timeUUID;
+            }
+            else //State == CLOSE_WAIT. Multiple transmit of FIN packet due to pkt loss
+            {
+                 //do nothing
             }
         }
         
@@ -1227,6 +1233,14 @@ void TCPAssignment::closeSocket(unsigned int pid, unsigned int fd)
     {
         free(blg);
     }
+    for (auto snd : TCPAssignment::send_window_lists[pid][fd])
+    {
+        free(snd);
+    }
+    for (auto rcv : TCPAssignment::recv_packet_lists[pid][fd])
+    {
+        free(rcv);
+    }
     TCPAssignment::contextList[pid].erase(fd);
     TCPAssignment::accept_waiting_lists[pid].erase(fd);
     TCPAssignment::established_backlog_lists[pid].erase(fd);
@@ -1260,7 +1274,7 @@ void TCPAssignment::timerCallback(void* payload)
         return;
     }
     Context* c = TCPAssignment::contextList[pid][fd];
-    if (c->timer_on && c->state == TCPAssignment::State::ESTABLISHED)
+    if (c->timer_on && c->state == TCPAssignment::State::ESTABLISHED && !c->isClosing)
     {        
 
         //printf("port number: %d timer ring\n", ntohs(c->remote_port));
@@ -1279,6 +1293,15 @@ void TCPAssignment::timerCallback(void* payload)
         {
             c->congestion_state = CONG_AVOIDANCE;
         }
+    }
+    else if (c->timer_on && c->state == TCPAssignment::State::ESTABLISHED && c->isClosing)
+    {
+        Packet* copyPacket = this->clonePacket(packet);
+        this->sendPacket("IPv4", packet);
+        Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
+        UUID timeUUID = TimerModule::addTimer((void* )copyPacket, msl);
+        c->timer_on = true;
+        c->timer_ID=timeUUID;
     }
     else
     {

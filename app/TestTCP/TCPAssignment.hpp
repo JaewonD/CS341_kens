@@ -139,6 +139,7 @@ public:
         unsigned int ack_number;
         State state;
         bool isBound;
+        bool isClosing;
         UUID syscall_hold_ID;
         BlockedTransferSyscall* btsyscall;
         UUID timer_ID;
