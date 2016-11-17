@@ -268,7 +268,7 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
     unsigned int* seq_number = &(context->seq_number);
     TCPAssignment::sendNewPacket(src_ip, src_port, dest_ip, dest_port, *seq_number, 
         0, 5, FLAG_FIN, htons(51200), 0, NULL, false);
-    
+    //printf("FIN packet reaaaaally ssent. (port: %d)\n", ntohs(context->remote_port));
     //updating contextList information
     context->syscall_hold_ID = syscallUUID;
     *seq_number = htonl(ntohl(*seq_number) + 1);
@@ -506,7 +506,7 @@ void TCPAssignment::retransmit_first_unacked_packet(int pid, int fd)
         cloned->readData(PACKETLOC_SEQNO, &seq_number, 4);
         this->sendPacket("IPv4", cloned);
         count++;
-        if (count > 15) break;
+        //if (count > 15) break;
     }
 }
 
@@ -559,6 +559,7 @@ void TCPAssignment::create_data_packets_and_send(int pid, int fd)
 
     Buffer* send_buffer = c->send_buffer;
     int unacked_data_length = find_length_of_unacked_packets(pid, fd);
+    if (c->cwnd < MAX_DATA_FIELD_SIZE) c->cwnd = MAX_DATA_FIELD_SIZE;
     int window_size_limit = (c->rwnd < c->cwnd)? c->rwnd : c->cwnd;
     int remaining_window = window_size_limit - unacked_data_length;
 
@@ -1012,6 +1013,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 
                 if (find_length_of_unacked_packets(pid, fd) > 0)
                 {
+                    //printf("port number: %d timer reset\n", ntohs(c->remote_port));
                     TimerModule::cancelTimer(c->timer_ID);
                     Packet* copyPacket = this->clonePacket(TCPAssignment::send_window_lists[pid][fd].front()->packet);
                     Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
@@ -1021,13 +1023,20 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                 }
                 else
                 {
+                    //printf("port number: %d timer turned off - bufsize: %d, unacked: %d - cwnd: %d\n", ntohs(c->remote_port), 
+                    //    c->send_buffer->size, find_length_of_unacked_packets(pid, fd), c->cwnd);
                     TimerModule::cancelTimer(c->timer_ID);
                     c->timer_on = false;
+                    if (c->send_buffer->size > 0)
+                    {
+                        create_data_packets_and_send(pid, fd);
+                    }
                 }
 
                 if (c->send_buffer->size + find_length_of_unacked_packets(pid, fd) == 0 &&
                     c->btsyscall->is_blocked && c->btsyscall->transfer_type == TRANSFER_CLOSE)
                 {
+                    //printf("Late close called, FIN sent. (port: %d)\n", ntohs(c->remote_port));
                     int ret = TCPAssignment::syscall_close(c->btsyscall->syscall_hold_ID, pid, fd);
                     returnSystemCall(c->btsyscall->syscall_hold_ID, ret);
                 }
@@ -1244,6 +1253,8 @@ void TCPAssignment::timerCallback(void* payload)
     Context* c = TCPAssignment::contextList[pid][fd];
     if (c->timer_on && c->state == TCPAssignment::State::ESTABLISHED)
     {        
+
+        //printf("port number: %d timer ring\n", ntohs(c->remote_port));
         Packet* copyPacket = this->clonePacket(packet);
         this->sendPacket("IPv4", packet);
         Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);

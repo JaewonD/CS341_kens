@@ -52,6 +52,18 @@ test_part4: test_part3
 	@echo "Note that passing this test does not mean that you are finished."
 	@echo "Check the pcap file that you have implemented congestion control well."
 
+test_part4_10:
+	make test_part4 > testoutput.txt
+	make test_part4 >> testoutput.txt
+	make test_part4 >> testoutput.txt
+	make test_part4 >> testoutput.txt
+	make test_part4 >> testoutput.txt
+	make test_part4 >> testoutput.txt
+	make test_part4 >> testoutput.txt
+	make test_part4 >> testoutput.txt
+	make test_part4 >> testoutput.txt
+	make test_part4 >> testoutput.txt
+
 doxygen:
 	doxygen doxygen/Doxyfile
 
