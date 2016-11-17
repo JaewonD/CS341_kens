@@ -46,14 +46,13 @@ test_part3: test_part2
 	@echo "Running test cases for project3..."
 	@-build/testTCP --gtest_filter="TestEnv_Any.TestTransfer_*" --gtest_output=xml:part3.xml
 
-test_part4: test_part3
+test_part4: #test_part3
 	@echo "Running test cases for project4..."
 	@-build/testTCP --gtest_filter="TestEnv_Congestion*" --gtest_output=xml:part4.xml
 	@echo "Note that passing this test does not mean that you are finished."
 	@echo "Check the pcap file that you have implemented congestion control well."
 
 test_part4_10:
-	make test_part4 > testoutput.txt
 	make test_part4 >> testoutput.txt
 	make test_part4 >> testoutput.txt
 	make test_part4 >> testoutput.txt
@@ -63,6 +62,24 @@ test_part4_10:
 	make test_part4 >> testoutput.txt
 	make test_part4 >> testoutput.txt
 	make test_part4 >> testoutput.txt
+	make test_part4 >> testoutput.txt
+
+test_part4_100:
+	make test_part4_10
+	make test_part4_10
+	make test_part4_10
+	make test_part4_10
+	make test_part4_10
+	make test_part4_10
+	make test_part4_10
+	make test_part4_10
+	make test_part4_10
+	make test_part4_10
+
+test_part4_300:
+	make test_part4_100
+	make test_part4_100
+	make test_part4_100
 
 doxygen:
 	doxygen doxygen/Doxyfile
