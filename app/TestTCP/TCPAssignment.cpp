@@ -224,6 +224,8 @@ int TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int sockfd, st
 int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
 {
     Context* context = TCPAssignment::contextList[pid][fd];
+    Packet *FinPacket;
+    Packet *copyPacket;
     if (context == NULL) return -1; 
     //close called at valid state
     if (context->state == TCPAssignment::State::FIN_WAIT_1 ||
@@ -266,8 +268,13 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
     }
 
     unsigned int* seq_number = &(context->seq_number);
-    TCPAssignment::sendNewPacket(src_ip, src_port, dest_ip, dest_port, *seq_number, 
-        0, 5, FLAG_FIN, htons(51200), 0, NULL, false);
+    FinPacket = TCPAssignment::sendNewPacket(src_ip, src_port, dest_ip, dest_port, *seq_number, 
+        0, 5, FLAG_FIN, htons(51200), 0, NULL, true);
+    copyPacket = this->clonePacket(FinPacket);
+    Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
+    UUID timeUUID = TimerModule::addTimer((void*)copyPacket, msl);
+    context->timer_ID = timeUUID;
+    this->sendPacket("IPv4", FinPacket);
     //printf("FIN packet reaaaaally ssent. (port: %d)\n", ntohs(context->remote_port));
     //updating contextList information
     context->syscall_hold_ID = syscallUUID;
@@ -933,6 +940,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         else if (c->state == TCPAssignment::State::FIN_WAIT_1)
         {
             c->state=TCPAssignment::State::FIN_WAIT_2;
+            TimerModule::cancelTimer(c->timer_ID);
         }
         //Get Ack in LAST_ACK state -> Ends connection in passive side, remove backlog&established, but do not remove context
         else if (c->state == TCPAssignment::State::LAST_ACK)
@@ -1132,6 +1140,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             unsigned int* seq_number= &(c->seq_number);
             unsigned int ack_number;
             
+            TimerModule::cancelTimer(c->timer_ID);
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
 
