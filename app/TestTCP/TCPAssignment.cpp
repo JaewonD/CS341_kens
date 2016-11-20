@@ -275,6 +275,7 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
     UUID timeUUID = TimerModule::addTimer((void*)copyPacket, msl);
     context->timer_ID = timeUUID;
     context->isClosing = true;
+    context->timer_on = true;
     this->sendPacket("IPv4", FinPacket);
     //printf("FIN packet reaaaaally ssent. (port: %d)\n", ntohs(context->remote_port));
     //updating contextList information
@@ -916,6 +917,9 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         }
 
         c = TCPAssignment::contextList[pid][fd];
+        unsigned int ack_number;
+        packet->readData(PACKETLOC_ACKNO, &ack_number, 4);
+
         /*Get Ack in CLOSING State -> 4-way handshaking is done in starting host. We send ACK, and wait
         for 2*MSL*/
         if (c->state == TCPAssignment::State::CLOSING)
@@ -938,7 +942,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             c->timer_ID=timeUUID;
         }
         //Get Ack in FIN_WAIT_1 state -> simply changes the state into FIN_WAIT_2
-        else if (c->state == TCPAssignment::State::FIN_WAIT_1)
+        else if (c->state == TCPAssignment::State::FIN_WAIT_1 && ack_number == htonl(ntohl(c->last_ack_number) + 1))
         {
             c->state=TCPAssignment::State::FIN_WAIT_2;
             TimerModule::cancelTimer(c->timer_ID);
@@ -951,8 +955,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         //Data transfer (send) - ACK received
         else if (c->state == TCPAssignment::State::ESTABLISHED && packet->getSize() - SIZE_EMPTY_PACKET == 0)
         {
-            unsigned int ack_number;
-            packet->readData(PACKETLOC_ACKNO, &ack_number, 4);
             //ack_number=htonl(ntohl(ack_number)+1);
 
             while (true)
@@ -1294,10 +1296,11 @@ void TCPAssignment::timerCallback(void* payload)
             c->congestion_state = CONG_AVOIDANCE;
         }
     }
-    else if (c->timer_on && c->state == TCPAssignment::State::ESTABLISHED && c->isClosing)
+    else if (c->timer_on && c->state == TCPAssignment::State::FIN_WAIT_1 && c->isClosing)
     {
         Packet* copyPacket = this->clonePacket(packet);
         this->sendPacket("IPv4", packet);
+        //printf("Fin timeout - fin resend, port: (port: %d)\n", c->remote_port);
         Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
         UUID timeUUID = TimerModule::addTimer((void* )copyPacket, msl);
         c->timer_on = true;
