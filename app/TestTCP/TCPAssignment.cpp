@@ -515,7 +515,7 @@ void TCPAssignment::retransmit_first_unacked_packet(int pid, int fd)
         cloned->readData(PACKETLOC_SEQNO, &seq_number, 4);
         this->sendPacket("IPv4", cloned);
         count++;
-        //if (count > 15) break;
+        if (count > 4) break;
     }
 }
 
@@ -988,7 +988,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                 else
                 {
                     c->dup_ack_count++;
-                    if (c->dup_ack_count == 3)
+                    if (c->dup_ack_count == 4)
                     {
                         c->ssthresh = c->cwnd / 2;
                         c->cwnd = c->ssthresh + 3;

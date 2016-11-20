@@ -55,7 +55,7 @@
 #define CONG_RECOVERY 2
 
 #define MSL 60
-#define RTO 200
+#define RTO 150
 
 namespace E
 {
