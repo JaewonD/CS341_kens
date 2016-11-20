@@ -1070,13 +1070,40 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             unsigned int seq_number;
             packet->readData(PACKETLOC_SEQNO, &seq_number, 4);
             if (seq_number == c->ack_number) {
+                //write received packet into buffer
                 Buffer* recv_buffer = c->recv_buffer;
-
                 int payload_size = packet->getSize() - SIZE_EMPTY_PACKET;
                 char* data = (char*) malloc (payload_size);
                 packet->readData(PACKETLOC_PAYLOAD, data, payload_size);
                 recv_buffer->write_buf(data, payload_size);
+                c->ack_number = htonl(ntohl(c->ack_number) + payload_size);
+                unsigned int cur_seqnum=seq_number;
+                //writes contiunous packets
+                while(true)
+                {
+                    Packet *pkt = TCPAssignment::recv_packet_lists[pid][fd].front();
 
+                    if(pkt == NULL) break;
+
+                    unsigned int buf_seq_number;
+                    pkt->readData(PACKETLOC_SEQNO, &buf_seq_number, 4);
+
+                    if(ntohl(cur_seqnum)+payload_size == ntohl(buf_seq_number)){
+
+                        //write to recv_buffer
+                        payload_size=pkt->getSize() - SIZE_EMPTY_PACKET;
+                        char *buf_data = (char*) malloc(payload_size);
+                        pkt->readData(PACKETLOC_PAYLOAD, buf_data, payload_size);
+                        recv_buffer->write_buf(buf_data, payload_size);
+                        c->ack_number = htonl(ntohl(c->ack_number) + payload_size);
+                        cur_seqnum=htonl(ntohl(cur_seqnum)+payload_size);
+
+                        //free packet&window
+                        TCPAssignment::recv_packet_lists[pid][fd].pop_front();
+                        freePacket(pkt);
+                    }
+                    else break;
+                }
                 if (c->btsyscall->is_blocked && c->btsyscall->transfer_type == TRANSFER_READ)
                 {
                     BlockedTransferSyscall* bts = c->btsyscall;
@@ -1085,7 +1112,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                     bts->is_blocked = false;
                 }
 
-                c->ack_number = htonl(ntohl(c->ack_number) + payload_size);
+//              c->ack_number = htonl(ntohl(c->ack_number) + payload_size);
                 int remaining_window = BUFFER_SIZE - find_length_of_out_of_order_packets(pid, fd) - recv_buffer->size;
                 TCPAssignment::sendNewPacket(dest_ip, dest_port, src_ip, src_port, c->seq_number, c->ack_number,
                     5, FLAG_ACK, htons(remaining_window), 0, NULL, false);
@@ -1093,7 +1120,29 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                 
             }
             else {
-                //TODO: Out of order packet arrival
+                //Send Cumulative ACK when out of order packet arrived
+                //Only buffers in recv_packet_lists when seq_numer is in window
+                if(c->ack_number < seq_number && seq_number<(c->ack_number)+BUFFER_SIZE){
+                    int inserted=0;
+                    for (auto rcv : TCPAssignment::recv_packet_lists[pid][fd]){
+                        unsigned int buf_seq_number;
+                        rcv->readData(PACKETLOC_SEQNO, &buf_seq_number, 4);
+                        //Same seq_number : retransmission -> do not need to save in recv_packet_list 
+                        if(ntohl(seq_number)==ntohl(buf_seq_number)) return;
+                        if(ntohl(seq_number)<ntohl(buf_seq_number)){
+                            TCPAssignment::recv_packet_lists[pid][fd].insert(rcv, packet);
+                            inserted=1;
+                            break;
+                        }
+                    }
+                    if(!inserted){
+                        TCPAssignment::recv_packet_lists[pid][fd].push_back(packet);
+                    }
+				}
+                //retransmits ack_number without updating ack_number
+                int remaining_window = BUFFER_SIZE - find_length_of_out_of_order_packets(pid, fd) - c->recv_buffer->size;
+                TCPAssignment::sendNewPacket(dest_ip, dest_port, src_ip, src_port, c->seq_number, c->ack_number,
+                    5, FLAG_ACK, htons(remaining_window), 0, NULL, false);
             }
         }
     }
