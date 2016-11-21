@@ -211,6 +211,8 @@ public:
     Context* create_new_context(unsigned int local_ip_address, unsigned short local_port, unsigned int remote_ip_address, 
         unsigned short remote_port, unsigned int seq_number, unsigned int ack_number, State state, bool isBound, 
         UUID syscall_hold_ID, UUID timer_ID, int backlog_size);
+    Packet* find_pkt_by_seq(unsigned int target_number, unsigned int pid, unsigned int fd);
+    void remove_pkt_by_seq(unsigned int target_number, unsigned int pid, unsigned int fd);
     Packet* sendNewPacket(unsigned int src_ip, unsigned short src_port, unsigned int dest_ip, unsigned short dest_port,
     unsigned int seq_number, unsigned int ack_number, int header_offset, char flag, short window_size,
     unsigned int payload_size, char* payload, bool noSend);
