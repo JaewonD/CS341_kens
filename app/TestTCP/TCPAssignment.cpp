@@ -1124,16 +1124,19 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                 //Only buffers in recv_packet_lists when seq_numer is in window
                 if(c->ack_number < seq_number && seq_number<(c->ack_number)+BUFFER_SIZE){
                     int inserted=0;
+                    std::list<Packet *>::iterator it;
+                    it=TCPAssignment::recv_packet_lists[pid][fd].begin();
                     for (auto rcv : TCPAssignment::recv_packet_lists[pid][fd]){
                         unsigned int buf_seq_number;
                         rcv->readData(PACKETLOC_SEQNO, &buf_seq_number, 4);
                         //Same seq_number : retransmission -> do not need to save in recv_packet_list 
                         if(ntohl(seq_number)==ntohl(buf_seq_number)) return;
                         if(ntohl(seq_number)<ntohl(buf_seq_number)){
-                            TCPAssignment::recv_packet_lists[pid][fd].insert(rcv, packet);
+                            TCPAssignment::recv_packet_lists[pid][fd].insert(it, packet);
                             inserted=1;
                             break;
                         }
+                        it++;
                     }
                     if(!inserted){
                         TCPAssignment::recv_packet_lists[pid][fd].push_back(packet);
