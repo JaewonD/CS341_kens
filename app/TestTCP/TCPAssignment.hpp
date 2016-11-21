@@ -56,6 +56,9 @@
 
 #define MSL 60
 #define RTO 150
+#define INITRTT 100
+#define INITDEV 25
+#define INITRTO 100
 
 namespace E
 {
@@ -152,6 +155,9 @@ public:
         int dup_ack_count;
         int ssthresh;
         int congestion_state;
+        Time estimateRTT;
+        Time devRTT;
+        Time timeRTO;
         unsigned int last_ack_number;
         bool timer_on;
     };
@@ -193,13 +199,15 @@ public:
         unsigned int remote_ip_address, unsigned short remote_port, int* pid, int* fd);
     bool retrieve_fd_from_context(unsigned int local_ip_address, unsigned short local_port, int* pid, int* fd);
     bool retrieve_backlog_when_FIN (unsigned int remote_ip_address, unsigned short remote_port, Backlog** bg);
-
+   
     void packet_fill_checksum(Packet* packet);
     void fill_packet_header(Packet* packet, unsigned int src_ip, unsigned short src_port,
         unsigned int dest_ip, unsigned short dest_port, char size, char syn, short window_size,
         unsigned int seq_number, unsigned int ack_number);
     void closeSocket(unsigned int pid, unsigned int fd);
-
+    Time minTime(Time time1, Time time2);
+    Time absTime(Time time1, Time time2);
+    Window* window_from_acknum(unsigned int ack_number, unsigned int pid, unsigned int fd);
     Context* create_new_context(unsigned int local_ip_address, unsigned short local_port, unsigned int remote_ip_address, 
         unsigned short remote_port, unsigned int seq_number, unsigned int ack_number, State state, bool isBound, 
         UUID syscall_hold_ID, UUID timer_ID, int backlog_size);
