@@ -142,6 +142,9 @@ int backlog_size)
     new_context->btsyscall = new BlockedTransferSyscall();
     new_context->rwnd = BUFFER_SIZE;
 
+    new_context->estimateRTT = TimeUtil::makeTime(INITRTT, TimeUtil::TimeUnit::MSEC);;
+    new_context->devRTT = TimeUtil::makeTime(INITDEV, TimeUtil::TimeUnit::MSEC);;
+    new_context->timeRTO = TimeUtil::makeTime(INITRTO, TimeUtil::TimeUnit::MSEC);;
     new_context->cwnd = MAX_DATA_FIELD_SIZE;
     new_context->dup_ack_count = 0;
     new_context->ssthresh = 64000;
@@ -271,8 +274,8 @@ int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
     FinPacket = TCPAssignment::sendNewPacket(src_ip, src_port, dest_ip, dest_port, *seq_number, 
         0, 5, FLAG_FIN, htons(51200), 0, NULL, true);
     copyPacket = this->clonePacket(FinPacket);
-    Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
-    UUID timeUUID = TimerModule::addTimer((void*)copyPacket, msl);
+//    Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
+    UUID timeUUID = TimerModule::addTimer((void*)copyPacket, context->timeRTO);
     context->timer_ID = timeUUID;
     context->isClosing = true;
     context->timer_on = true;
@@ -511,9 +514,11 @@ void TCPAssignment::retransmit_first_unacked_packet(int pid, int fd)
     for (auto it : TCPAssignment::send_window_lists[pid][fd])
     {
         Packet* cloned = this->clonePacket(it->packet);
+        Time time = this->getHost()->getSystem()->getCurrentTime();
         unsigned int seq_number;
         cloned->readData(PACKETLOC_SEQNO, &seq_number, 4);
         this->sendPacket("IPv4", cloned);
+        it->currentTime = time;
         count++;
         if (count > 4) break;
     }
@@ -600,8 +605,8 @@ void TCPAssignment::create_data_packets_and_send(int pid, int fd)
         if (c->timer_on == false)
         {
             Packet* copyPacket = this->clonePacket(newPacket);
-            Time msl = TimeUtil::makeTime(200, TimeUtil::TimeUnit::MSEC);
-            UUID timeUUID = TimerModule::addTimer((void* )copyPacket, msl);
+//            Time msl = TimeUtil::makeTime(200, TimeUtil::TimeUnit::MSEC);
+            UUID timeUUID = TimerModule::addTimer((void* )copyPacket, c->timeRTO);
             c->timer_on = true;
             c->timer_ID=timeUUID;
         }
@@ -706,6 +711,30 @@ bool TCPAssignment::retrieve_backlog_when_FIN (unsigned int remote_ip_address, u
     return false;
 }
 
+Packet* TCPAssignment::find_pkt_by_seq(unsigned int target_number, unsigned int pid, unsigned int fd){
+    for(auto pkt : TCPAssignment::recv_packet_lists[pid][fd])
+    {
+        unsigned int seq_number;
+        pkt->readData(PACKETLOC_SEQNO, &seq_number, 4);
+        if(ntohl(target_number)==ntohl(seq_number)) return pkt;
+    }
+    return NULL;
+}
+void TCPAssignment::remove_pkt_by_seq(unsigned int target_number, unsigned int pid, unsigned int fd){
+    std::list<Packet *>::iterator it;
+    it=TCPAssignment::recv_packet_lists[pid][fd].begin();
+    for(auto pkt : TCPAssignment::recv_packet_lists[pid][fd])
+    {
+        unsigned int seq_number;
+        pkt->readData(PACKETLOC_SEQNO, &seq_number, 4);
+        if(ntohl(target_number)==ntohl(seq_number)){
+            TCPAssignment::recv_packet_lists[pid][fd].erase(it);
+            break;
+        }
+        it++;
+    }
+    return;
+}
 void TCPAssignment::packet_fill_checksum(Packet* packet)
 {
     int length = packet->getSize();
@@ -755,6 +784,20 @@ void TCPAssignment::fill_packet_header(Packet* packet, unsigned int src_ip, unsi
     /* Mark seq number */
     packet->writeData(PACKETLOC_SEQNO, &seq_number, 4);
     packet->writeData(PACKETLOC_ACKNO, &ack_number, 4);
+}
+Time TCPAssignment::absTime(Time time1, Time time2){
+    if(time1>time2)
+    {
+        return (time1-time2);
+    }
+    else
+    {
+        return (time2-time1);
+    }
+}
+Time TCPAssignment::minTime(Time time1, Time time2){
+    if(time1>time2) return time2;
+    else return time1;
 }
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
@@ -956,7 +999,24 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         else if (c->state == TCPAssignment::State::ESTABLISHED && packet->getSize() - SIZE_EMPTY_PACKET == 0)
         {
             //ack_number=htonl(ntohl(ack_number)+1);
-
+            unsigned int ack_num;
+            packet->readData(PACKETLOC_ACKNO, &ack_num, 4);
+            Time time = this->getHost()->getSystem()->getCurrentTime();
+            Window *ackWindow = TCPAssignment::window_from_acknum(ack_num, pid, fd);
+            
+//            if(ackWindow == NULL)
+//            {
+//                printf("error happened\n");
+//            }
+//            else{
+            if(ackWindow != NULL)
+            {   
+                Time RTT = time - (ackWindow->currentTime);
+                Time time_RTO = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
+                c->estimateRTT = 0.875 * (c->estimateRTT) + 0.125 * RTT;
+                c->devRTT = 0.75 * (c->devRTT) + 0.25 * TCPAssignment::absTime(RTT, (c->estimateRTT));
+                c->timeRTO = TCPAssignment::minTime(time_RTO, (c->estimateRTT) + 4 * (c->devRTT));
+            }
             while (true)
             {
                 Window* window = TCPAssignment::send_window_lists[pid][fd].front();
@@ -1027,8 +1087,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                     //printf("port number: %d timer reset\n", ntohs(c->remote_port));
                     TimerModule::cancelTimer(c->timer_ID);
                     Packet* copyPacket = this->clonePacket(TCPAssignment::send_window_lists[pid][fd].front()->packet);
-                    Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
-                    UUID timeUUID = TimerModule::addTimer((void* )copyPacket, msl);
+//                    Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
+                    UUID timeUUID = TimerModule::addTimer((void* )copyPacket, c->timeRTO);
                     c->timer_on = true;
                     c->timer_ID=timeUUID;
                 }
@@ -1068,15 +1128,28 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
         else if (c->state == TCPAssignment::State::ESTABLISHED && packet->getSize() - SIZE_EMPTY_PACKET > 0)
         {
             unsigned int seq_number;
-            packet->readData(PACKETLOC_SEQNO, &seq_number, 4);
-            if (seq_number == c->ack_number) {
-                Buffer* recv_buffer = c->recv_buffer;
 
+            packet->readData(PACKETLOC_SEQNO, &seq_number, 4);
+
+            if (seq_number == c->ack_number) {
+                //write received packet into buffer
+                Buffer* recv_buffer = c->recv_buffer;
                 int payload_size = packet->getSize() - SIZE_EMPTY_PACKET;
                 char* data = (char*) malloc (payload_size);
                 packet->readData(PACKETLOC_PAYLOAD, data, payload_size);
                 recv_buffer->write_buf(data, payload_size);
-
+                c->ack_number = htonl(ntohl(c->ack_number) + payload_size);
+                 //writes contiunous packets
+                Packet *pkt;
+                while((pkt=find_pkt_by_seq(c->ack_number, pid, fd))!=NULL){
+                    payload_size = pkt->getSize() - SIZE_EMPTY_PACKET;  
+                    char* buf_data = (char*) malloc (payload_size);
+                    pkt->readData(PACKETLOC_PAYLOAD, buf_data, payload_size);
+                    recv_buffer->write_buf(buf_data, payload_size);
+                    remove_pkt_by_seq(c->ack_number, pid, fd);
+                    c->ack_number = htonl(ntohl(c->ack_number) + payload_size);
+                    freePacket(pkt);
+                }
                 if (c->btsyscall->is_blocked && c->btsyscall->transfer_type == TRANSFER_READ)
                 {
                     BlockedTransferSyscall* bts = c->btsyscall;
@@ -1085,7 +1158,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                     bts->is_blocked = false;
                 }
 
-                c->ack_number = htonl(ntohl(c->ack_number) + payload_size);
+//              c->ack_number = htonl(ntohl(c->ack_number) + payload_size);
                 int remaining_window = BUFFER_SIZE - find_length_of_out_of_order_packets(pid, fd) - recv_buffer->size;
                 TCPAssignment::sendNewPacket(dest_ip, dest_port, src_ip, src_port, c->seq_number, c->ack_number,
                     5, FLAG_ACK, htons(remaining_window), 0, NULL, false);
@@ -1093,7 +1166,18 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                 
             }
             else {
-                //TODO: Out of order packet arrival
+                //Send Cumulative ACK when out of order packet arrived
+                //Only buffers in recv_packet_lists when seq_numer is in window 
+                if(find_length_of_out_of_order_packets(pid, fd) + c->recv_buffer->size < BUFFER_SIZE - MAX_DATA_FIELD_SIZE){
+                    if(ntohl(c->ack_number) < ntohl(seq_number) && ntohl(seq_number)+MAX_DATA_FIELD_SIZE < ntohl(c->ack_number)+BUFFER_SIZE){
+                        Packet* copyPacket = this->clonePacket(packet);
+                        TCPAssignment::recv_packet_lists[pid][fd].push_back(copyPacket);
+			 	    }
+                }
+                //retransmits ack_number without updating ack_number
+                int remaining_window = BUFFER_SIZE - find_length_of_out_of_order_packets(pid, fd) - c->recv_buffer->size;
+                TCPAssignment::sendNewPacket(dest_ip, dest_port, src_ip, src_port, c->seq_number, c->ack_number,
+                    5, FLAG_ACK, htons(remaining_window), 0, NULL, false);
             }
         }
     }
@@ -1200,7 +1284,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             unsigned int* seq_number= &(c->seq_number);
             unsigned int ack_number;
             
-  //          *seq_number = htonl(ntohl(*seq_number)+1);
+//          *seq_number = htonl(ntohl(*seq_number)+1);
             packet->readData(PACKETLOC_SEQNO, &ack_number, 4);
             ack_number=htonl(ntohl(ack_number)+1);
 
@@ -1218,6 +1302,18 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
     }
     freePacket(packet);
     return;
+}
+
+TCPAssignment::Window* TCPAssignment::window_from_acknum(unsigned int ack_number, unsigned int pid, unsigned int fd){
+    for(auto snd : TCPAssignment::send_window_lists[pid][fd])
+    {
+        int buf_seq_num;
+        int payload;
+        snd->packet->readData(PACKETLOC_SEQNO, &buf_seq_num, 4);
+        payload=snd->packet->getSize() - SIZE_EMPTY_PACKET;
+        if (ntohl(buf_seq_num)+payload==ntohl(ack_number)) return snd;
+    }
+    return NULL;
 }
 
 void TCPAssignment::closeSocket(unsigned int pid, unsigned int fd)
@@ -1282,15 +1378,15 @@ void TCPAssignment::timerCallback(void* payload)
         //printf("port number: %d timer ring\n", ntohs(c->remote_port));
         Packet* copyPacket = this->clonePacket(packet);
         this->sendPacket("IPv4", packet);
-        Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
-        UUID timeUUID = TimerModule::addTimer((void* )copyPacket, msl);
+//        Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
+        UUID timeUUID = TimerModule::addTimer((void* )copyPacket, c->timeRTO);
         c->timer_on = true;
         c->timer_ID=timeUUID;
         
         c->ssthresh = c->cwnd / 2;
         c->cwnd = MAX_DATA_FIELD_SIZE;
         c->dup_ack_count = 0;
-        c->congestion_state = CONG_SLOW_START;
+        c->congestion_state = CONG_AVOIDANCE;
         if (c->congestion_state == CONG_SLOW_START && c->cwnd > c->ssthresh)
         {
             c->congestion_state = CONG_AVOIDANCE;
@@ -1301,8 +1397,8 @@ void TCPAssignment::timerCallback(void* payload)
         Packet* copyPacket = this->clonePacket(packet);
         this->sendPacket("IPv4", packet);
         //printf("Fin timeout - fin resend, port: (port: %d)\n", c->remote_port);
-        Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
-        UUID timeUUID = TimerModule::addTimer((void* )copyPacket, msl);
+//        Time msl = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
+        UUID timeUUID = TimerModule::addTimer((void* )copyPacket, c->timeRTO);
         c->timer_on = true;
         c->timer_ID=timeUUID;
     }
