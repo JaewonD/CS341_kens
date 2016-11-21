@@ -56,9 +56,9 @@
 
 #define MSL 60
 #define RTO 150
-#define INITRTT 100
-#define INITDEV 25
-#define INITRTO 100
+#define INITRTT 20
+#define INITDEV 10
+#define INITRTO 60
 
 namespace E
 {

@@ -1390,7 +1390,7 @@ void TCPAssignment::timerCallback(void* payload)
         c->ssthresh = c->cwnd / 2;
         c->cwnd = MAX_DATA_FIELD_SIZE;
         c->dup_ack_count = 0;
-        c->congestion_state = CONG_SLOW_START;
+        c->congestion_state = CONG_AVOIDANCE;
         if (c->congestion_state == CONG_SLOW_START && c->cwnd > c->ssthresh)
         {
             c->congestion_state = CONG_AVOIDANCE;
