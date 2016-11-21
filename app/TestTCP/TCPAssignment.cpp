@@ -1141,15 +1141,14 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                 c->ack_number = htonl(ntohl(c->ack_number) + payload_size);
                  //writes contiunous packets
                 Packet *pkt;
-                printf("In order :: Seq_number : %d\n", ntohl(seq_number));
                 while((pkt=find_pkt_by_seq(c->ack_number, pid, fd))!=NULL){
-                    printf("Buffer released\n");
                     payload_size = pkt->getSize() - SIZE_EMPTY_PACKET;  
                     char* buf_data = (char*) malloc (payload_size);
                     pkt->readData(PACKETLOC_PAYLOAD, buf_data, payload_size);
                     recv_buffer->write_buf(buf_data, payload_size);
                     remove_pkt_by_seq(c->ack_number, pid, fd);
                     c->ack_number = htonl(ntohl(c->ack_number) + payload_size);
+                    freePacket(pkt);
                 }
                 if (c->btsyscall->is_blocked && c->btsyscall->transfer_type == TRANSFER_READ)
                 {
@@ -1171,10 +1170,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                 //Only buffers in recv_packet_lists when seq_numer is in window 
                 if(find_length_of_out_of_order_packets(pid, fd) + c->recv_buffer->size < BUFFER_SIZE - MAX_DATA_FIELD_SIZE){
                     if(ntohl(c->ack_number) < ntohl(seq_number) && ntohl(seq_number)+MAX_DATA_FIELD_SIZE < ntohl(c->ack_number)+BUFFER_SIZE){
-                        printf("Out of order :: Seq_number : %d\n", ntohl(seq_number));
-                        printf("Remaining buffer space : %d\n", BUFFER_SIZE - find_length_of_out_of_order_packets(pid, fd) - c->recv_buffer->size);
-                        printf("Buffer size : %d\n", find_length_of_out_of_order_packets(pid, fd));
-                        TCPAssignment::recv_packet_lists[pid][fd].push_back(packet);
+                        Packet* copyPacket = this->clonePacket(packet);
+                        TCPAssignment::recv_packet_lists[pid][fd].push_back(copyPacket);
 			 	    }
                 }
                 //retransmits ack_number without updating ack_number
