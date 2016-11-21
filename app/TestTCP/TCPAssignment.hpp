@@ -155,9 +155,9 @@ public:
         int dup_ack_count;
         int ssthresh;
         int congestion_state;
-        Time estimateRTT;
-        Time devRTT;
-        Time timeRTO;
+        int estimateRTT;
+        int devRTT;
+        int timeRTO;
         unsigned int last_ack_number;
         bool timer_on;
     };

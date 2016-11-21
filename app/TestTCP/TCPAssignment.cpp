@@ -775,6 +775,7 @@ Time TCPAssignment::minTime(Time time1, Time time2){
     if(time1>time2) return time2;
     else return time1;
 }
+
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 {
     // Using packet header, find matching context's fd.
@@ -978,16 +979,20 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
             packet->readData(PACKETLOC_ACKNO, &ack_num, 4);
             Time time = this->getHost()->getSystem()->getCurrentTime();
             Window *ackWindow = TCPAssignment::window_from_acknum(ack_num, pid, fd);
-
-            if(ackWindow == NULL){
-                printf("error happened\n");
-                return;
+            
+//            if(ackWindow == NULL)
+//            {
+//                printf("error happened\n");
+//            }
+//            else{
+            if(ackWindow != NULL)
+            {   
+                Time RTT = time - (ackWindow->currentTime);
+                Time time_RTO = TimeUtil::makeTime(RTO, TimeUtil::TimeUnit::MSEC);
+                c->estimateRTT = 0.875 * (c->estimateRTT) + 0.125 * RTT;
+                c->devRTT = 0.75 * (c->devRTT) + 0.25 * TCPAssignment::absTime(RTT, (c->estimateRTT));
+                c->timeRTO = TCPAssignment::minTime(time_RTO, (c->estimateRTT) + 4 * (c->devRTT));
             }
-
-            Time RTT = time - (ackWindow->currentTime);
-            c->estimateRTT = 0.875 * (c->estimateRTT) + 0.125 * RTT;
-            c->devRTT = 0.75 * (c->devRTT) + 0.25 * TCPAssignment::absTime(RTT, (c->estimateRTT));
-            c->timeRTO = TCPAssignment::minTime(RTO, (c->estimateRTT) + 4 * (c->devRTT));
             while (true)
             {
                 Window* window = TCPAssignment::send_window_lists[pid][fd].front();
@@ -1105,11 +1110,11 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
                 Buffer* recv_buffer = c->recv_buffer;
                 int payload_size = packet->getSize() - SIZE_EMPTY_PACKET;
                 char* data = (char*) malloc (payload_size);
-                packet->readData(PACKETLOC_PAYLOAD, data, payload_size);
+                    packet->readData(PACKETLOC_PAYLOAD, data, payload_size);
                 recv_buffer->write_buf(data, payload_size);
                 c->ack_number = htonl(ntohl(c->ack_number) + payload_size);
                 unsigned int cur_seqnum=seq_number;
-                //writes contiunous packets
+                 //writes contiunous packets
                 while(true)
                 {
                     Packet *pkt = TCPAssignment::recv_packet_lists[pid][fd].front();
